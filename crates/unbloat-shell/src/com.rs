@@ -17,12 +17,13 @@ use windows::{
         },
         UI::{Shell::*, WindowsAndMessaging::*},
     },
-    core::{Error, GUID, HRESULT, IUnknown, Interface, PSTR, Ref, Result, implement, w},
+    core::{Error, GUID, HRESULT, IUnknown, Interface, PSTR, PWSTR, Ref, Result, implement},
 };
 
-// A new class identity prevents Explorer from reusing the older folder-only
-// handler already cached in its process. Keep the previous identity compatible.
-pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372);
+// Refresh the class identity so Explorer doesn't reuse a cached text-only handler.
+// Older identities remain compatible until their in-process references drain.
+pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373);
+const CLSID_PREVIOUS: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372);
 const CLSID_LEGACY: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96371);
 static MODULE: AtomicIsize = AtomicIsize::new(0);
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
@@ -60,12 +61,14 @@ fn executable() -> Result<PathBuf> {
 #[implement(IShellExtInit, IContextMenu)]
 struct Handler {
     paths: RefCell<Vec<PathBuf>>,
+    icon: RefCell<Option<crate::menu_icon::MenuIcon>>,
     _lifetime: Lifetime,
 }
 impl Handler {
     fn new() -> Self {
         Self {
             paths: RefCell::new(Vec::new()),
+            icon: RefCell::new(None),
             _lifetime: Lifetime::new(),
         }
     }
@@ -143,15 +146,28 @@ impl IContextMenu_Impl for Handler_Impl {
         if flags & CMF_DEFAULTONLY != 0 || self.paths.borrow().is_empty() || first > last {
             return S_OK;
         }
-        match unsafe {
-            InsertMenuW(
-                menu,
-                index,
-                MF_BYPOSITION | MF_STRING,
-                first as usize,
-                w!("Compactar com Unbloat"),
-            )
-        } {
+        let insert = (|| -> Result<()> {
+            let mut icon = self.icon.borrow_mut();
+            if icon.is_none() {
+                *icon = Some(crate::menu_icon::MenuIcon::load(HMODULE(
+                    MODULE.load(Ordering::Relaxed) as *mut c_void,
+                ))?);
+            }
+            let mut title: Vec<u16> = "Compactar com Unbloat"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let item = MENUITEMINFOW {
+                cbSize: size_of::<MENUITEMINFOW>() as u32,
+                fMask: MIIM_ID | MIIM_STRING | MIIM_BITMAP,
+                wID: first,
+                dwTypeData: PWSTR(title.as_mut_ptr()),
+                hbmpItem: icon.as_ref().unwrap().bitmap(),
+                ..Default::default()
+            };
+            unsafe { InsertMenuItemW(menu, index, true, &item) }
+        })();
+        match insert {
             Ok(()) => HRESULT(1),
             Err(e) => e.code(),
         }
@@ -290,7 +306,7 @@ pub unsafe extern "system" fn DllGetClassObject(
     unsafe {
         *out = std::ptr::null_mut();
     }
-    if unsafe { *clsid } != CLSID_UNBLOAT && unsafe { *clsid } != CLSID_LEGACY {
+    if ![CLSID_UNBLOAT, CLSID_PREVIOUS, CLSID_LEGACY].contains(&unsafe { *clsid }) {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
     let factory: IUnknown = Factory {

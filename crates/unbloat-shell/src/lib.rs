@@ -2,4 +2,6 @@
 #[cfg(windows)]
 mod com;
 #[cfg(windows)]
+mod menu_icon;
+#[cfg(windows)]
 pub mod selection;

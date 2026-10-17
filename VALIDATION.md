@@ -7,6 +7,12 @@ MSVC + Windows SDK, independent 7-Zip 26.01. Builds require stable Rust >= 1.93.
 
 ## Completed
 
+- The context-menu entry now includes the original Unbloat icon embedded in the
+  shell DLL. A 32-bit alpha bitmap is retained for the COM handler's lifetime
+  and freed afterward. The native probe checked visible pixel data, repeated
+  menu queries, and bitmap cleanup. After updating the user's installation,
+  Windows composed icon-bearing menus for an image, a folder, and a mixed
+  selection; the bitmap was 16x16 on the tested display configuration.
 - Double-click regression fixed: launching `unbloat.exe` without arguments now
   opens a persistent native welcome/install window instead of briefly opening
   a console and exiting. The release uses the Windows GUI subsystem.

@@ -22,7 +22,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 A instalação por usuário fica em `%LOCALAPPDATA%\Programs\Unbloat`, sem admin.
 Selecione um ou mais arquivos e/ou pastas no mesmo diretório, clique com o botão direito e escolha
 **Compactar com Unbloat**. No Windows 11, use **Mostrar mais opções**. A entrada
-é direta, sem submenu. A janela nativa informa a atividade; **Cancelar** ou
+é direta, sem submenu, e mostra o ícone próprio do Unbloat ao lado do texto.
+A janela nativa informa a atividade; **Cancelar** ou
 fechar a janela solicita cancelamento e espera a limpeza segura. Ao concluir,
 a janela mostra o destino e fecha automaticamente após dois segundos.
 
@@ -47,9 +48,9 @@ novamente. Os scripts não encerram o Explorer nem exigem elevação. Reinstala�
 preservam `config.toml`. A desinstalação preserva arquivos extras que você colocou
 na pasta de instalação. Não modifica registros do 7-Zip.
 
-O instalador grava a DLL COM com um nome baseado no seu hash. A migração do
-handler anterior, que aceitava apenas pastas, usa uma nova identidade COM para
-que o Explorer não reutilize a versão antiga carregada. DLLs antigas ainda em
+O instalador grava a DLL COM com um nome baseado no seu hash. As migrações dos
+handlers anteriores usam uma nova identidade COM para que o Explorer não
+reutilize a versão antiga carregada. DLLs antigas ainda em
 uso permanecem na lista de componentes para remoção na desinstalação.
 
 ## Desenvolver

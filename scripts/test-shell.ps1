@@ -3,9 +3,9 @@
 param([switch]$PortableOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
-$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
-if (-not $PortableOnly -and ((Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid") -or (Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$legacyClsid"))) { throw 'Uma instalação já existe. Use -PortableOnly ou um usuário de teste sem Unbloat instalado.' }
+$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96373}'
+$knownClsids = @($clsid, '{C74E4F58-593D-4FB5-AE90-5683C2D96372}', '{C74E4F58-593D-4FB5-AE90-5683C2D96371}')
+if (-not $PortableOnly -and ($knownClsids | Where-Object { Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$_" })) { throw 'Uma instalação já existe. Use -PortableOnly ou um usuário de teste sem Unbloat instalado.' }
 $base = Join-Path $root ('target\shell-validation-' + [Guid]::NewGuid().ToString('N'))
 $installed = Join-Path $base 'installed'
 $portable = Join-Path $base 'portable'

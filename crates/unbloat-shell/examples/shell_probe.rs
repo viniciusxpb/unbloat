@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *mut *mut c_void,
     ) -> windows::core::HRESULT;
     type Unload = unsafe extern "system" fn() -> windows::core::HRESULT;
-    const CLSID: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372);
+    const CLSID: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373);
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
     let invoke = args.iter().any(|a| a == "--invoke");
     let cancel = args.iter().any(|a| a == "--cancel");
@@ -117,6 +117,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             String::from_utf16_lossy(&text[..text.iter().position(|c| *c == 0).unwrap()]),
             "Compactar com Unbloat"
         );
+        let bitmap = check_menu_icon(popup, 0)?;
+        // A second menu query must reuse a valid bitmap, not replace/delete a
+        // resource still referenced by the first menu.
+        let second_popup = CreatePopupMenu()?;
+        assert_eq!(menu.QueryContextMenu(second_popup, 0, 1, 20, 0).0, 1);
+        assert_eq!(check_menu_icon(second_popup, 0)?, bitmap);
+        DestroyMenu(second_popup)?;
         if invoke {
             let info = CMINVOKECOMMANDINFO {
                 cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
@@ -168,11 +175,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(init);
         drop(data);
         drop(factory);
+        assert_eq!(can_unload(), S_OK, "COM reference leak before bitmap check");
+        let mut deleted_bitmap = windows::Win32::Graphics::Gdi::BITMAP::default();
+        assert_eq!(
+            windows::Win32::Graphics::Gdi::GetObjectW(
+                windows::Win32::Graphics::Gdi::HGDIOBJ(bitmap.0),
+                size_of::<windows::Win32::Graphics::Gdi::BITMAP>() as i32,
+                Some((&mut deleted_bitmap as *mut windows::Win32::Graphics::Gdi::BITMAP).cast())
+            ),
+            0,
+            "menu bitmap leaked after handler destruction"
+        );
         for pidl in full {
             CoTaskMemFree(Some(pidl.cast()));
         }
         CoTaskMemFree(Some(parent.cast()));
-        assert_eq!(can_unload(), S_OK, "COM reference leak");
         FreeLibrary(module)?;
         CoUninitialize();
     }
@@ -233,6 +250,7 @@ fn check_explorer_menu(paths: &[std::path::PathBuf]) -> Result<(), Box<dyn std::
             let length = GetMenuStringW(popup, index as u32, Some(&mut text), MF_BYPOSITION);
             let title = String::from_utf16_lossy(&text[..length.max(0) as usize]).replace('&', "");
             if title == "Compactar com Unbloat" {
+                check_menu_icon(popup, index as u32)?;
                 found = true;
                 println!(
                     "PASS: Windows shell composed a top-level '{title}' entry for {} selected item(s).",
@@ -252,6 +270,51 @@ fn check_explorer_menu(paths: &[std::path::PathBuf]) -> Result<(), Box<dyn std::
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn check_menu_icon(
+    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    index: u32,
+) -> Result<windows::Win32::Graphics::Gdi::HBITMAP, Box<dyn std::error::Error>> {
+    use windows::Win32::{Graphics::Gdi::*, UI::WindowsAndMessaging::*};
+    unsafe {
+        let mut info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_BITMAP,
+            ..Default::default()
+        };
+        GetMenuItemInfoW(menu, index, true, &mut info)?;
+        assert!(!info.hbmpItem.is_invalid(), "menu icon bitmap missing");
+        let mut bitmap = BITMAP::default();
+        assert_eq!(
+            GetObjectW(
+                HGDIOBJ(info.hbmpItem.0),
+                size_of::<BITMAP>() as i32,
+                Some((&mut bitmap as *mut BITMAP).cast())
+            ),
+            size_of::<BITMAP>() as i32
+        );
+        assert_eq!(bitmap.bmBitsPixel, 32);
+        assert!(bitmap.bmWidth > 0 && bitmap.bmHeight > 0 && !bitmap.bmBits.is_null());
+        let pixels = std::slice::from_raw_parts(
+            bitmap.bmBits.cast::<u8>(),
+            (bitmap.bmWidthBytes * bitmap.bmHeight) as usize,
+        );
+        assert!(
+            pixels.chunks_exact(4).any(|p| p[3] != 0),
+            "menu icon is fully transparent"
+        );
+        assert!(
+            pixels.chunks_exact(4).any(|p| p[..3] != pixels[..3]),
+            "menu icon contains no artwork"
+        );
+        println!(
+            "PASS: nonempty {}x{} 32-bit menu icon",
+            bitmap.bmWidth, bitmap.bmHeight
+        );
+        Ok(info.hbmpItem)
+    }
 }
 #[cfg(not(windows))]
 fn main() {

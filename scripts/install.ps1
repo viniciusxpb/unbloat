@@ -5,8 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not [Environment]::Is64BitProcess) { throw 'Execute o PowerShell de 64 bits.' }
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
-$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
+$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96373}'
+$legacyClsids = @('{C74E4F58-593D-4FB5-AE90-5683C2D96372}', '{C74E4F58-593D-4FB5-AE90-5683C2D96371}')
 $repository = Split-Path $PSScriptRoot
 if (-not $SourceDir) {
     $SourceDir = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'unbloat.exe')) { $PSScriptRoot } else { Join-Path $repository 'target\release' }
@@ -56,7 +56,7 @@ $ownedFiles = @('unbloat.exe', $installedDllName, 'config.toml', 'LICENSE', 'ins
 $previousMarker = Join-Path $InstallDir '.unbloat-install.json'
 if (Test-Path -LiteralPath $previousMarker) {
     $previous = Get-Content -LiteralPath $previousMarker -Raw | ConvertFrom-Json
-    if ($previous.product -eq 'Unbloat' -and $previous.clsid -in @($clsid, $legacyClsid)) { $ownedFiles += @($previous.files) }
+    if ($previous.product -eq 'Unbloat' -and $previous.clsid -in (@($clsid) + $legacyClsids)) { $ownedFiles += @($previous.files) }
 }
 $ownedFiles += Get-ChildItem -LiteralPath (Join-Path $InstallDir 'licenses') -File -Recurse | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) }
 @{ product = 'Unbloat'; clsid = $clsid; shell_dll = $installedDllName; files = @($ownedFiles | Sort-Object -Unique) } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir '.unbloat-install.json') -Encoding UTF8
@@ -93,11 +93,13 @@ try {
     throw "Falha ao ativar o COM por usuário. Registros revertidos. $($_.Exception.Message)"
 }
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class UnbloatInstallNotify { [DllImport("shell32.dll")] public static extern void SHChangeNotify(uint e, uint f, IntPtr a, IntPtr b); }'
-# Retire only the previous class registration belonging to this installation.
-$legacyKey = "HKCU:\Software\Classes\CLSID\$legacyClsid"
-$legacyServer = Get-Item -LiteralPath "$legacyKey\InprocServer32" -ErrorAction SilentlyContinue
-if ($legacyServer -and [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($legacyServer.GetValue(''))) -eq $InstallDir) {
-    Remove-Item -LiteralPath $legacyKey -Recurse -Force
+# Retire only previous class registrations belonging to this installation.
+foreach ($legacyClsid in $legacyClsids) {
+    $legacyKey = "HKCU:\Software\Classes\CLSID\$legacyClsid"
+    $legacyServer = Get-Item -LiteralPath "$legacyKey\InprocServer32" -ErrorAction SilentlyContinue
+    if ($legacyServer -and [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($legacyServer.GetValue(''))) -eq $InstallDir) {
+        Remove-Item -LiteralPath $legacyKey -Recurse -Force
+    }
 }
 [UnbloatInstallNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 Write-Host "Unbloat instalado em $InstallDir. Registro COM e interfaces validados."

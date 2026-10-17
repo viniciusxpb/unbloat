@@ -10,9 +10,9 @@ if (-not (Test-Path -LiteralPath $marker)) {
 }
 if ((Get-Item -LiteralPath $InstallDir).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Diretório de instalação é link/junction.' }
 $manifest = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-$currentClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
-$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
-if ($manifest.product -ne 'Unbloat' -or $manifest.clsid -notin @($currentClsid, $legacyClsid)) { throw 'Marcador de instalação inválido.' }
+$currentClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96373}'
+$legacyClsids = @('{C74E4F58-593D-4FB5-AE90-5683C2D96372}', '{C74E4F58-593D-4FB5-AE90-5683C2D96371}')
+if ($manifest.product -ne 'Unbloat' -or $manifest.clsid -notin (@($currentClsid) + $legacyClsids)) { throw 'Marcador de instalação inválido.' }
 $clsid = $manifest.clsid
 $prefix = $InstallDir.TrimEnd('\') + '\'
 $targets = foreach ($relative in $manifest.files) {
