@@ -118,7 +118,9 @@ fn main() {
     if let Err(e) = run() {
         eprintln!("Unbloat: {e}");
         #[cfg(windows)]
-        if std::env::args_os().len() == 1 || std::env::args_os().any(|a| a == "--shell") {
+        if (std::env::args_os().len() == 1 || std::env::args_os().any(|a| a == "--shell"))
+            && e.downcast_ref::<ui::Reported>().is_none()
+        {
             ui::show_error(&e.to_string());
         }
         std::process::exit(1);

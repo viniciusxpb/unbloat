@@ -145,16 +145,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 let window = FindWindowW(w!("UnbloatProgress"), PCWSTR::null()).ok();
                 if let Some(window) = window {
-                    if !saw_window {
-                        let mut title = [0u16; 256];
-                        let len = GetWindowTextW(window, &mut title).max(0) as usize;
-                        assert_eq!(
-                            String::from_utf16_lossy(&title[..len]),
-                            unbloat_shell::i18n::text("progress.title")
-                        );
-                    }
+                    // The title tracks progress ("Unbloat — 47% …"); the summary stays
+                    // open until closed, so close it once the title reports the end.
+                    let mut title = [0u16; 256];
+                    let len = GetWindowTextW(window, &mut title).max(0) as usize;
+                    let title = String::from_utf16_lossy(&title[..len]);
+                    let text = unbloat_shell::i18n::text;
+                    assert!(
+                        title.starts_with(text("app.name")),
+                        "unexpected title {title:?}"
+                    );
+                    assert_ne!(title, text("progress.window_failed"), "compression failed");
                     saw_window = true;
-                    if cancel && !sent_cancel {
+                    if (cancel || title == text("progress.window_done")) && !sent_cancel {
                         PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0))?;
                         sent_cancel = true;
                     }

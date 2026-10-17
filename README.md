@@ -23,9 +23,13 @@ A instalação por usuário fica em `%LOCALAPPDATA%\Programs\Unbloat`, sem admin
 Selecione um ou mais arquivos e/ou pastas no mesmo diretório, clique com o botão direito e escolha
 **Compactar com Unbloat**. No Windows 11, use **Mostrar mais opções**. A entrada
 é direta, sem submenu, e mostra o ícone próprio do Unbloat ao lado do texto.
-A janela nativa informa a atividade; **Cancelar** ou
-fechar a janela solicita cancelamento e espera a limpeza segura. Ao concluir,
-a janela mostra o destino e fecha automaticamente após dois segundos.
+A janela de progresso mostra porcentagem, quantidade processada, velocidade,
+tempo restante, taxa de compressão, arquivos e o arquivo sendo lido; o progresso
+também aparece no botão da barra de tarefas. **Cancelar**, Esc ou fechar a
+janela solicita cancelamento e espera a limpeza segura. Ao concluir, a janela
+mostra um resumo (tamanhos, espaço liberado, tempo) e fica aberta até você
+clicar em **Fechar** ou **Abrir pasta**, que abre o Explorer com o `.7z` selecionado.
+Em caso de erro, a mensagem aparece na própria janela.
 
 Uma pasta gera `pasta-unbloat.7z` ao lado da original. Várias pastas geram
 `Unbloat-AAAAMMDD-HHMMSS.7z` no pai imediato comum. Colisões usam `-2`, `-3` etc.

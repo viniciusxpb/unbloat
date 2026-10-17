@@ -45,12 +45,7 @@ impl TemporaryOutput {
 
     pub fn publish(self, directory: &Path, stem: &str) -> Result<PathBuf> {
         for index in 1u64.. {
-            let name = if index == 1 {
-                format!("{stem}.7z")
-            } else {
-                format!("{stem}-{index}.7z")
-            };
-            let final_path = directory.join(name);
+            let final_path = directory.join(candidate(stem, index));
             // MoveFileEx without REPLACE_EXISTING is an atomic no-clobber publication.
             #[cfg(windows)]
             let result = {
@@ -111,4 +106,25 @@ pub fn stem(manifest: &Manifest, config: &Output) -> Result<String> {
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
         ))
     }
+}
+
+/// `stem.7z`, then `stem-2.7z`, `stem-3.7z`… when names are taken.
+fn candidate(stem: &str, index: u64) -> String {
+    if index == 1 {
+        format!("{stem}.7z")
+    } else {
+        format!("{stem}-{index}.7z")
+    }
+}
+
+/// The name `publish` would pick right now, for display only. `None` for
+/// several roots, whose name depends on the publication time.
+pub fn preview_name(manifest: &Manifest, config: &Output) -> Option<String> {
+    if manifest.roots.len() != 1 {
+        return None;
+    }
+    let stem = stem(manifest, config).ok()?;
+    (1u64..)
+        .map(|index| candidate(&stem, index))
+        .find(|name| !manifest.destination.join(name).exists())
 }

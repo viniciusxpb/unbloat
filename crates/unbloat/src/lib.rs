@@ -6,6 +6,7 @@ pub mod i18n;
 pub mod manifest;
 pub mod output;
 pub mod scanner;
+pub mod tracker;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;

@@ -473,6 +473,7 @@ dependencies = [
  "sevenz-rust2",
  "toml",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@ use crate::{
     error,
     manifest::{ArchiveItem, Manifest, check_source},
     output::{self, TemporaryOutput},
+    tracker::{Phase, Tracker},
 };
 use sevenz_rust2::{
     ArchiveEntry, ArchiveReader, ArchiveWriter, EncoderConfiguration, EncoderMethod, Password,
@@ -12,7 +13,7 @@ use sevenz_rust2::{
 };
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::PathBuf,
     sync::atomic::AtomicBool,
 };
@@ -25,12 +26,21 @@ struct CheckedReader<'a> {
     read: u64,
     finished: bool,
     cancel: &'a AtomicBool,
+    tracker: &'a Tracker,
+    progress: &'a dyn Fn(&str),
 }
 impl<'a> CheckedReader<'a> {
-    fn new(item: &'a ArchiveItem, cancel: &'a AtomicBool) -> Self {
+    fn new(
+        item: &'a ArchiveItem,
+        cancel: &'a AtomicBool,
+        tracker: &'a Tracker,
+        progress: &'a dyn Fn(&str),
+    ) -> Self {
         Self {
             item,
             cancel,
+            tracker,
+            progress,
             file: None,
             read: 0,
             finished: false,
@@ -42,6 +52,8 @@ impl<'a> CheckedReader<'a> {
             return Ok(0);
         }
         if self.file.is_none() {
+            // Reported here, not when queued: solid blocks are encoded later, in one go.
+            (self.progress)(&self.item.archive_path);
             check_source(self.item)?;
             let mut options = OpenOptions::new();
             options.read(true);
@@ -63,6 +75,7 @@ impl<'a> CheckedReader<'a> {
         }
         let count = self.file.as_mut().unwrap().read(buf)?;
         self.read += count as u64;
+        self.tracker.read(count as u64);
         if count == 0 {
             if self.read != self.item.size {
                 return Err(error(i18n::text("archive.size_changed")));
@@ -70,6 +83,7 @@ impl<'a> CheckedReader<'a> {
             check_source(self.item)?;
             self.file = None;
             self.finished = true;
+            self.tracker.file_done();
         }
         Ok(count)
     }
@@ -85,17 +99,61 @@ impl Read for CheckedReader<'_> {
     }
 }
 
+/// Records the archive size as the encoder writes it, for progress reporting.
+struct CountingWriter<'a> {
+    file: File,
+    position: u64,
+    tracker: &'a Tracker,
+}
+impl Write for CountingWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let count = self.file.write(buf)?;
+        self.position += count as u64;
+        self.tracker.written_up_to(self.position);
+        Ok(count)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+impl Seek for CountingWriter<'_> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.position = self.file.seek(position)?;
+        Ok(self.position)
+    }
+}
+
 pub fn create(
     manifest: &Manifest,
     config: &Config,
     cancel: &AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<PathBuf> {
+    create_tracked(manifest, config, cancel, progress, &Tracker::default())
+}
+
+/// Like `create`, also publishing live counters to `tracker`.
+pub fn create_tracked(
+    manifest: &Manifest,
+    config: &Config,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(&str),
+    tracker: &Tracker,
+) -> Result<PathBuf> {
     config.validate()?;
     manifest.validate()?;
     check_cancel(cancel)?;
+    let files = manifest.items.iter().filter(|item| !item.is_directory);
+    tracker.start(
+        files.clone().count() as u64,
+        files.map(|item| item.size).sum(),
+    );
     let (temporary, file) = TemporaryOutput::create(&manifest.destination)?;
-    let mut writer = ArchiveWriter::new(file)?;
+    let mut writer = ArchiveWriter::new(CountingWriter {
+        file,
+        position: 0,
+        tracker,
+    })?;
     writer.set_content_methods(vec![
         EncoderConfiguration::new(EncoderMethod::LZMA2)
             .with_options(Lzma2Options::from_level(config.compression.level).into()),
@@ -103,7 +161,9 @@ pub fn create(
     let cap = config.compression.solid_block_size_mb * 1024 * 1024;
     let mut block: Vec<&ArchiveItem> = Vec::new();
     let mut bytes = 0u64;
-    let flush = |writer: &mut ArchiveWriter<File>, block: &mut Vec<&ArchiveItem>| -> Result<()> {
+    let flush = |writer: &mut ArchiveWriter<CountingWriter>,
+                 block: &mut Vec<&ArchiveItem>|
+     -> Result<()> {
         if !block.is_empty() {
             let entries = block
                 .iter()
@@ -111,7 +171,7 @@ pub fn create(
                 .collect();
             let readers = block
                 .iter()
-                .map(|item| SourceReader::new(CheckedReader::new(item, cancel)))
+                .map(|item| SourceReader::new(CheckedReader::new(item, cancel, tracker, progress)))
                 .collect();
             writer.push_archive_entries(entries, readers)?;
             block.clear();
@@ -120,13 +180,13 @@ pub fn create(
     };
     for item in &manifest.items {
         check_cancel(cancel)?;
-        progress(&item.archive_path);
         if item.is_directory || item.size == 0 {
             check_source(item)?;
-            // An empty file still gets opened to surface sharing/permission failures.
-            if !item.is_directory {
-                let mut r = CheckedReader::new(item, cancel);
-                if r.read(&mut [0u8; 1])? != 0 {
+            if item.is_directory {
+                progress(&item.archive_path);
+            } else {
+                // An empty file still gets opened to surface sharing/permission failures.
+                if CheckedReader::new(item, cancel, tracker, progress).read(&mut [0u8; 1])? != 0 {
                     return Err(error(i18n::text("archive.empty_changed")));
                 }
             }
@@ -148,14 +208,15 @@ pub fn create(
             bytes = 0;
             writer.push_archive_entry(
                 ArchiveEntry::new_file(&item.archive_path),
-                Some(CheckedReader::new(item, cancel)),
+                Some(CheckedReader::new(item, cancel, tracker, progress)),
             )?;
         }
     }
     flush(&mut writer, &mut block)?;
-    let file = writer.finish()?;
+    let file = writer.finish()?.file;
     file.sync_all()?;
     drop(file);
+    tracker.set_phase(Phase::Verifying);
     progress(i18n::text("progress.verifying"));
     // Read every stream back, validating decompression and CRC before publication.
     let mut reader = ArchiveReader::open(&temporary.path, Password::empty())?;
@@ -168,9 +229,11 @@ pub fn create(
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err(io::Error::other(i18n::text("engine.cancelled_short")).into());
             }
-            if stream.read(&mut buf)? == 0 {
+            let count = stream.read(&mut buf)?;
+            if count == 0 {
                 break;
             }
+            tracker.verified(count as u64);
         }
         Ok(true)
     })?;
@@ -180,8 +243,10 @@ pub fn create(
         check_cancel(cancel)?;
         check_source(item)?;
     }
-    temporary.publish(
+    let published = temporary.publish(
         &manifest.destination,
         &output::stem(manifest, &config.output)?,
-    )
+    )?;
+    tracker.set_phase(Phase::Done);
+    Ok(published)
 }

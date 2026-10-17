@@ -531,3 +531,46 @@ fn mixed_files_and_folders_preserve_selection_and_directory_ignore_rules() {
         ])
     );
 }
+
+#[test]
+fn tracker_counts_every_byte_file_and_phase() {
+    use unbloat::tracker::{Phase, Tracker};
+    let tree = Tree::new();
+    tree.put("project/a.txt", &"alpha\n".repeat(5000));
+    tree.put("project/sub/b.txt", "beta");
+    tree.put("project/empty", "");
+    let manifest = scan(&tree, &["project"]);
+    let tracker = Tracker::default();
+    assert_eq!(tracker.snapshot().phase, Phase::Scanning);
+    assert_eq!(tracker.snapshot().fraction(), 0.0);
+    let opened = std::sync::Mutex::new(Vec::new());
+    let path = archiver::create_tracked(
+        &manifest,
+        &config(),
+        &AtomicBool::new(false),
+        &|message| opened.lock().unwrap().push(message.to_owned()),
+        &tracker,
+    )
+    .unwrap();
+    let done = tracker.snapshot();
+    let bytes = 5000 * 6 + 4;
+    assert_eq!(
+        (done.phase, done.total_files, done.files_done),
+        (Phase::Done, 3, 3)
+    );
+    assert_eq!(
+        (done.total_bytes, done.bytes_read, done.bytes_verified),
+        (bytes, bytes, bytes)
+    );
+    assert_eq!(done.bytes_written, fs::metadata(&path).unwrap().len());
+    assert_eq!(done.fraction(), 1.0);
+    // Files are reported when opened for reading, each exactly once.
+    let opened = opened.into_inner().unwrap();
+    for name in ["project/a.txt", "project/sub/b.txt", "project/empty"] {
+        assert_eq!(
+            opened.iter().filter(|m| *m == name).count(),
+            1,
+            "{opened:?}"
+        );
+    }
+}
