@@ -7,6 +7,21 @@ MSVC + Windows SDK, independent 7-Zip 26.01. Builds require stable Rust >= 1.93.
 
 ## Completed
 
+- Portuguese and English UI catalogs now cover the native launcher, progress
+  window, context menu, CLI/engine diagnostics, installer, uninstaller, make help
+  and benchmark report. Catalogs are UTF-8 files under `locales/`; native builds
+  embed sorted static tables without a runtime parser or heap cache in Explorer.
+  `make test` checks catalog parity, placeholders, regional tags, English fallback,
+  UTF-8 command output and localized installer diagnostics. The Windows test
+  also checked real launcher titles and buttons in both languages, pt-PT,
+  an unsupported locale and the detected system locale. Portable shell tests
+  passed in Portuguese and English, including localized progress titles, icons,
+  compression and cancellation. The isolated install-button test copied the
+  catalogs but sandbox restrictions denied COM registry writes; the localized
+  error dialog was inspected and the temporary installation was uninstalled.
+  Successful registration through the new localized installer remains to be
+  checked outside the sandbox. `make` explicitly starts 64-bit PowerShell even
+  when make itself is 32-bit.
 - The context-menu entry now includes the original Unbloat icon embedded in the
   shell DLL. A 32-bit alpha bitmap is retained for the COM handler's lifetime
   and freed afterward. The native probe checked visible pixel data, repeated
@@ -23,8 +38,9 @@ MSVC + Windows SDK, independent 7-Zip 26.01. Builds require stable Rust >= 1.93.
 - Engine preflight passed **before** shell implementation: two projects with
   distinct ignore files, real scanner/manifest, real LZMA2 solid compression,
   real extraction and content/hierarchy comparison.
-- `cargo test --workspace --all-targets --locked`: 14 passing test cases
-  (12 engine cases + shared transport roundtrip/cleanup in each package).
+- `cargo test --workspace --all-targets --locked`: 20 passing test cases
+  (12 engine cases, shared transport roundtrip/cleanup in each package and
+  three localization cases in each package).
 - Individual image files, multiple selected files and mixed file/folder
   manifests round-tripped successfully. Explicitly selected files are included
   without loading parent ignore rules; ignore rules still apply inside selected

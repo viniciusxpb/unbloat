@@ -1,6 +1,6 @@
 //! Reproducible, real engine benchmark. External 7-Zip is optional validation only.
 use std::{fs, path::PathBuf, sync::atomic::AtomicBool, time::Instant};
-use unbloat::{Result, archiver, config::Config, scanner};
+use unbloat::{Result, archiver, config::Config, i18n, scanner};
 fn main() -> Result<()> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/benchmark");
     fs::create_dir_all(&base)?;
@@ -45,11 +45,17 @@ fn main() -> Result<()> {
     let archive = archiver::create(&manifest, &config, &cancel, &|_| {})?;
     let archive_seconds = start.elapsed().as_secs_f64();
     let peak = peak_memory();
-    let mut report = format!(
-        "# Unbloat benchmark\n\nWindows x64; release; LZMA2 level 5, solid blocks 64 MiB, single encoder thread.\nArchiving time includes full CRC/decompression verification before publication.\n\n- Ignored files: 10000\n- Included files: {}\n- Walker entries returned: {} (same before/after adding ignored files)\n- Baseline scan: {baseline_ms:.2} ms\n- Scan with ignored files: {scan_ms:.2} ms\n- Archive + verification: {archive_seconds:.3} s\n- Peak process working set: {peak} bytes\n- Archive size: {} bytes\n",
-        scanner::included_files(&manifest),
-        manifest.examined_entries,
-        fs::metadata(&archive)?.len()
+    let mut report = i18n::message(
+        "benchmark.report",
+        &[
+            &scanner::included_files(&manifest),
+            &manifest.examined_entries,
+            &format!("{baseline_ms:.2}"),
+            &format!("{scan_ms:.2}"),
+            &format!("{archive_seconds:.3}"),
+            &peak,
+            &fs::metadata(&archive)?.len(),
+        ],
     );
     let seven_zip = PathBuf::from("C:/Program Files/7-Zip/7z.exe");
     if seven_zip.is_file() {
@@ -83,11 +89,17 @@ fn main() -> Result<()> {
         if !output.status.success() {
             return Err(unbloat::error(String::from_utf8_lossy(&output.stderr)));
         }
-        report.push_str(&format!("\n7-Zip independent comparison (same approved files):\n\n- Compression time: {:.3} s (does not include a verification pass)\n- Size: {} bytes\n", start.elapsed().as_secs_f64(), fs::metadata(comparison)?.len()));
+        report.push_str(&i18n::message(
+            "benchmark.comparison",
+            &[
+                &format!("{:.3}", start.elapsed().as_secs_f64()),
+                &fs::metadata(comparison)?.len(),
+            ],
+        ));
     } else {
-        report.push_str("\n7-Zip was not available for comparison.\n");
+        report.push_str(i18n::text("benchmark.no_comparison"));
     }
-    report.push_str("\nThe walker-entry counter measures yielded entries, not low-level directory reads. The ignore crate prunes ignored directories before recursion. Timings depend on filesystem cache and antivirus; no performance threshold is inferred from one run.\n");
+    report.push_str(i18n::text("benchmark.notes"));
     fs::write(base.join("RESULTS.md"), &report)?;
     print!("{report}");
     Ok(())

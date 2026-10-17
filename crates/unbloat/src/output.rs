@@ -1,4 +1,4 @@
-use crate::{Result, config::Output, error, manifest::Manifest, scanner::root_name};
+use crate::{Result, config::Output, error, i18n, manifest::Manifest, scanner::root_name};
 use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
@@ -34,9 +34,9 @@ impl TemporaryOutput {
                 Ok(file) => return Ok((Self { path }, file)),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(e) => {
-                    return Err(error(format!(
-                        "Não foi possível criar arquivo temporário em {}: {e}",
-                        directory.display()
+                    return Err(error(i18n::message(
+                        "output.temporary_failed",
+                        &[&directory.display(), &e],
                     )));
                 }
             }
@@ -76,9 +76,9 @@ impl TemporaryOutput {
                 Ok(()) => return Ok(final_path),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(e) => {
-                    return Err(error(format!(
-                        "Falha ao publicar {}: {e}",
-                        final_path.display()
+                    return Err(error(i18n::message(
+                        "output.publish_failed",
+                        &[&final_path.display(), &e],
                     )));
                 }
             }

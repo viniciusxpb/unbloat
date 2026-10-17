@@ -1,5 +1,6 @@
 //! Small shared transport protocol. No dependency on the archive engine.
 #![cfg(windows)]
+use crate::i18n;
 use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
@@ -19,7 +20,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub fn write(paths: &[PathBuf]) -> io::Result<PathBuf> {
     if paths.is_empty() || paths.len() > 10000 {
-        return Err(io::Error::other("Seleção vazia ou grande demais."));
+        return Err(io::Error::other(i18n::text("selection.empty")));
     }
     let mut data = Vec::new();
     data.extend_from_slice(MAGIC);
@@ -27,14 +28,14 @@ pub fn write(paths: &[PathBuf]) -> io::Result<PathBuf> {
     for path in paths {
         let units: Vec<u16> = path.as_os_str().encode_wide().collect();
         if !path.is_absolute() || units.len() > 32767 || units.contains(&0) {
-            return Err(io::Error::other("Caminho selecionado inválido."));
+            return Err(io::Error::other(i18n::text("selection.invalid_path")));
         }
         data.extend_from_slice(&(units.len() as u32).to_le_bytes());
         for unit in units {
             data.extend_from_slice(&unit.to_le_bytes());
         }
         if data.len() as u64 > MAX_BYTES {
-            return Err(io::Error::other("Seleção grande demais."));
+            return Err(io::Error::other(i18n::text("selection.too_large")));
         }
     }
     loop {
@@ -67,37 +68,35 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<PathBuf>> {
     use std::os::windows::fs::MetadataExt;
     let parent = path
         .parent()
-        .ok_or_else(|| io::Error::other("Transporte sem diretório."))?;
+        .ok_or_else(|| io::Error::other(i18n::text("selection.no_parent")))?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !name.starts_with("unbloat-selection-")
         || !name.ends_with(".bin")
         || parent.canonicalize()? != std::env::temp_dir().canonicalize()?
     {
-        return Err(io::Error::other(
-            "Arquivo de seleção fora do transporte temporário do Unbloat.",
-        ));
+        return Err(io::Error::other(i18n::text("selection.outside_temp")));
     }
     let meta = fs::symlink_metadata(path)?;
     if !meta.is_file() || meta.file_attributes() & 0x400 != 0 {
-        return Err(io::Error::other("Transporte não é um arquivo regular."));
+        return Err(io::Error::other(i18n::text("selection.not_regular")));
     }
     let result = (|| {
         let mut file = OpenOptions::new().read(true).share_mode(1).open(path)?;
         if file.metadata()?.len() > MAX_BYTES {
-            return Err(io::Error::other("Transporte grande demais."));
+            return Err(io::Error::other(i18n::text("selection.transport_large")));
         }
         let mut data = Vec::new();
         Read::by_ref(&mut file)
             .take(MAX_BYTES + 1)
             .read_to_end(&mut data)?;
         if data.len() as u64 > MAX_BYTES {
-            return Err(io::Error::other("Transporte grande demais."));
+            return Err(io::Error::other(i18n::text("selection.transport_large")));
         }
         let mut cursor = io::Cursor::new(data);
         let mut magic = [0u8; 8];
         cursor.read_exact(&mut magic)?;
         if &magic != MAGIC {
-            return Err(io::Error::other("Transporte de seleção inválido."));
+            return Err(io::Error::other(i18n::text("selection.invalid")));
         }
         fn number(r: &mut impl Read) -> io::Result<u32> {
             let mut b = [0; 4];
@@ -106,13 +105,13 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<PathBuf>> {
         }
         let count = number(&mut cursor)?;
         if count == 0 || count > 10000 {
-            return Err(io::Error::other("Quantidade de itens inválida."));
+            return Err(io::Error::other(i18n::text("selection.count")));
         }
         let mut paths = Vec::new();
         for _ in 0..count {
             let len = number(&mut cursor)?;
             if len == 0 || len > 32767 {
-                return Err(io::Error::other("Comprimento de caminho inválido."));
+                return Err(io::Error::other(i18n::text("selection.path_length")));
             }
             let mut units = Vec::with_capacity(len as usize);
             for _ in 0..len {
@@ -121,16 +120,16 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<PathBuf>> {
                 units.push(u16::from_le_bytes(b));
             }
             if units.contains(&0) {
-                return Err(io::Error::other("NUL no caminho."));
+                return Err(io::Error::other(i18n::text("selection.nul")));
             }
             let path = PathBuf::from(OsString::from_wide(&units));
             if !path.is_absolute() {
-                return Err(io::Error::other("Seleção deve conter caminhos absolutos."));
+                return Err(io::Error::other(i18n::text("selection.absolute")));
             }
             paths.push(path);
         }
         if cursor.position() != cursor.get_ref().len() as u64 {
-            return Err(io::Error::other("Dados extras no transporte."));
+            return Err(io::Error::other(i18n::text("selection.extra")));
         }
         Ok(paths)
     })();

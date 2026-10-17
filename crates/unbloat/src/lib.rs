@@ -1,6 +1,8 @@
 //! Unbloat's manifest-based archive engine.
 pub mod archiver;
 pub mod config;
+#[path = "../../../shared/i18n.rs"]
+pub mod i18n;
 pub mod manifest;
 pub mod output;
 pub mod scanner;
@@ -14,7 +16,7 @@ pub fn error(message: impl Into<String>) -> Error {
 
 pub fn check_cancel(cancel: &std::sync::atomic::AtomicBool) -> Result<()> {
     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(error("Operação cancelada. Nenhum arquivo foi publicado."));
+        return Err(error(i18n::text("engine.cancelled")));
     }
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::i18n;
 use crate::{
     Result, check_cancel,
     config::Config,
@@ -56,7 +57,7 @@ impl<'a> CheckedReader<'a> {
                 || meta.len() != self.item.size
                 || meta.modified()? != self.item.modified
             {
-                return Err(error("Arquivo modificado antes da leitura."));
+                return Err(error(i18n::text("archive.changed_before_read")));
             }
             self.file = Some(file);
         }
@@ -64,7 +65,7 @@ impl<'a> CheckedReader<'a> {
         self.read += count as u64;
         if count == 0 {
             if self.read != self.item.size {
-                return Err(error("Tamanho do arquivo mudou durante a leitura."));
+                return Err(error(i18n::text("archive.size_changed")));
             }
             check_source(self.item)?;
             self.file = None;
@@ -122,7 +123,7 @@ pub fn create(
             if !item.is_directory {
                 let mut r = CheckedReader::new(item, cancel);
                 if r.read(&mut [0u8; 1])? != 0 {
-                    return Err(error("Arquivo vazio mudou durante a leitura."));
+                    return Err(error(i18n::text("archive.empty_changed")));
                 }
             }
             let entry = if item.is_directory {
@@ -151,17 +152,17 @@ pub fn create(
     let file = writer.finish()?;
     file.sync_all()?;
     drop(file);
-    progress("Validando integridade do arquivo…");
+    progress(i18n::text("progress.verifying"));
     // Read every stream back, validating decompression and CRC before publication.
     let mut reader = ArchiveReader::open(&temporary.path, Password::empty())?;
     if reader.archive().files.len() != manifest.items.len() {
-        return Err(error("Número de entradas gravadas incorreto."));
+        return Err(error(i18n::text("archive.entry_count")));
     }
     reader.for_each_entries(|_, stream| {
         let mut buf = [0u8; 65536];
         loop {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(io::Error::other("Operação cancelada").into());
+                return Err(io::Error::other(i18n::text("engine.cancelled_short")).into());
             }
             if stream.read(&mut buf)? == 0 {
                 break;

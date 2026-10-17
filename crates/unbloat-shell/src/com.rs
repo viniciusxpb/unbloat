@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+use crate::i18n;
 use std::{
     cell::RefCell,
     ffi::{OsString, c_void},
@@ -9,6 +10,7 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
+        Globalization::{CP_ACP, WideCharToMultiByte},
         System::{
             Com::*,
             LibraryLoader::GetModuleFileNameW,
@@ -17,14 +19,17 @@ use windows::{
         },
         UI::{Shell::*, WindowsAndMessaging::*},
     },
-    core::{Error, GUID, HRESULT, IUnknown, Interface, PSTR, PWSTR, Ref, Result, implement},
+    core::{Error, GUID, HRESULT, IUnknown, Interface, PCSTR, PSTR, PWSTR, Ref, Result, implement},
 };
 
-// Refresh the class identity so Explorer doesn't reuse a cached text-only handler.
+// Refresh the class identity so Explorer doesn't reuse a handler without localization.
 // Older identities remain compatible until their in-process references drain.
-pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373);
-const CLSID_PREVIOUS: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372);
-const CLSID_LEGACY: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96371);
+pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96374);
+const CLSID_PREVIOUS: [GUID; 3] = [
+    GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373),
+    GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372),
+    GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96371),
+];
 static MODULE: AtomicIsize = AtomicIsize::new(0);
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static LOCKS: AtomicUsize = AtomicUsize::new(0);
@@ -153,7 +158,7 @@ impl IContextMenu_Impl for Handler_Impl {
                     MODULE.load(Ordering::Relaxed) as *mut c_void,
                 ))?);
             }
-            let mut title: Vec<u16> = "Compactar com Unbloat"
+            let mut title: Vec<u16> = i18n::text("menu.title")
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
@@ -199,11 +204,11 @@ impl IContextMenu_Impl for Handler_Impl {
                 .arg(&selection)
                 .current_dir(
                     exe.parent()
-                        .ok_or_else(|| failure("Pasta da aplicação inválida"))?,
+                        .ok_or_else(|| failure(i18n::text("common.app_directory")))?,
                 )
                 .creation_flags(0x08000000)
                 .spawn()
-                .map_err(|e| failure(format!("Não foi possível iniciar Unbloat: {e}")))?;
+                .map_err(|e| failure(i18n::message("menu.launch_failed", &[&e])))?;
             Ok(())
         })();
         if launch.is_err() {
@@ -230,7 +235,7 @@ impl IContextMenu_Impl for Handler_Impl {
         }
         let text = match kind {
             GCS_VERBA | GCS_VERBW => "unbloat",
-            GCS_HELPTEXTA | GCS_HELPTEXTW => "Compactar projetos respeitando .gitignore e .ignore",
+            GCS_HELPTEXTA | GCS_HELPTEXTW => i18n::text("menu.help"),
             _ => return Err(Error::from(E_INVALIDARG)),
         };
         if kind & GCS_UNICODE != 0 {
@@ -242,8 +247,19 @@ impl IContextMenu_Impl for Handler_Impl {
             dest[len] = 0;
         } else {
             let dest = unsafe { std::slice::from_raw_parts_mut(name.0, capacity as usize) };
-            let len = text.len().min(dest.len() - 1);
-            dest[..len].copy_from_slice(&text.as_bytes()[..len]);
+            let units: Vec<_> = text.encode_utf16().collect();
+            let required =
+                unsafe { WideCharToMultiByte(CP_ACP, 0, &units, None, PCSTR::null(), None) };
+            if required == 0 || required as usize >= dest.len() {
+                dest[0] = 0;
+                return Err(Error::from(E_FAIL));
+            }
+            let len =
+                unsafe { WideCharToMultiByte(CP_ACP, 0, &units, Some(dest), PCSTR::null(), None) }
+                    as usize;
+            if len == 0 {
+                return Err(Error::from_thread());
+            }
             dest[len] = 0;
         }
         Ok(())
@@ -306,7 +322,7 @@ pub unsafe extern "system" fn DllGetClassObject(
     unsafe {
         *out = std::ptr::null_mut();
     }
-    if ![CLSID_UNBLOAT, CLSID_PREVIOUS, CLSID_LEGACY].contains(&unsafe { *clsid }) {
+    if unsafe { *clsid } != CLSID_UNBLOAT && !CLSID_PREVIOUS.contains(&unsafe { *clsid }) {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
     let factory: IUnknown = Factory {

@@ -2,6 +2,7 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn compile_windows_resource(resource: &str) -> Option<PathBuf> {
+    compile_localizations();
     println!("cargo:rerun-if-changed=../../scripts/windows-resource.rs");
     println!("cargo:rerun-if-changed=../../assets/unbloat.ico");
     println!("cargo:rerun-if-changed=../../assets/{resource}");
@@ -48,4 +49,35 @@ fn compile_windows_resource(resource: &str) -> Option<PathBuf> {
         .expect("Run Windows resource compiler");
     assert!(result.success(), "Resource compilation failed");
     Some(output)
+}
+
+/// Embed sorted static catalogs, with no parsing or heap cache inside Explorer.
+fn compile_localizations() {
+    use std::collections::BTreeMap;
+    let mut generated = String::new();
+    for (name, constant) in [("en", "EN"), ("pt-BR", "PT")] {
+        let path = format!("../../locales/{name}.txt");
+        println!("cargo:rerun-if-changed={path}");
+        let source = std::fs::read_to_string(path).expect("Read UTF-8 localization catalog");
+        let mut entries = BTreeMap::new();
+        for line in source
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
+            let (key, value) = line.split_once('=').expect("Invalid localization entry");
+            assert!(
+                entries
+                    .insert(key, value.replace("\\r", "\r").replace("\\n", "\n"))
+                    .is_none(),
+                "Duplicate localization key: {key}"
+            );
+        }
+        generated.push_str(&format!("const {constant}: &[(&str, &str)] = &[\n"));
+        for (key, value) in entries {
+            generated.push_str(&format!("({key:?}, {value:?}),\n"));
+        }
+        generated.push_str("];\n");
+    }
+    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("locales.rs");
+    std::fs::write(output, generated).expect("Generate embedded localization catalogs");
 }

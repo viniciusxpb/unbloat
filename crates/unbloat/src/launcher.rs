@@ -6,6 +6,7 @@ use std::{
     sync::mpsc::{self, Receiver},
     thread,
 };
+use unbloat::i18n;
 use unbloat::{Result, error};
 use windows::{
     Win32::{
@@ -25,7 +26,6 @@ use windows::{
 const INSTALL: usize = 10;
 const CLOSE: usize = 20;
 const DESCRIPTION: usize = 30;
-const USAGE: &str = "Selecione arquivos e/ou pastas no mesmo diretório e clique com o botão direito em 'Compactar com Unbloat'.\r\n\r\nNo Windows 11, abra 'Mostrar mais opções'. O arquivo .7z será salvo ao lado dos itens selecionados.";
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -45,14 +45,14 @@ fn install(script: &Path) -> Result<()> {
     // The packaged installer needs only Windows PowerShell, never Cargo/Rust.
     let powershell = PathBuf::from(
         std::env::var_os("SystemRoot")
-            .ok_or_else(|| error("Diretório do Windows não encontrado (SystemRoot)."))?,
+            .ok_or_else(|| error(i18n::text("launcher.windows_directory")))?,
     )
     .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let output = Command::new(powershell)
         .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
             "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & $env:UNBLOAT_INSTALL_SCRIPT"])
         .env("UNBLOAT_INSTALL_SCRIPT", script)
-        .current_dir(script.parent().ok_or_else(|| error("Pasta do instalador inválida."))?)
+        .current_dir(script.parent().ok_or_else(|| error(i18n::text("launcher.installer_directory")))?)
         .creation_flags(0x08000000) // CREATE_NO_WINDOW; the native window reports progress/errors.
         .output()?;
     if !output.status.success() {
@@ -61,9 +61,9 @@ fn install(script: &Path) -> Result<()> {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        return Err(error(format!(
-            "Não foi possível instalar a integração.\n\n{}",
-            details.trim().chars().take(3000).collect::<String>()
+        return Err(error(i18n::message(
+            "launcher.install_error",
+            &[&details.trim().chars().take(3000).collect::<String>()],
         )));
     }
     Ok(())
@@ -101,9 +101,7 @@ unsafe extern "system" fn procedure(
                 let _ = EnableWindow(state.close_button, false);
                 let _ = SetWindowTextW(
                     state.label,
-                    w!(
-                        "Instalando a integração do botão direito…\r\n\r\nAguarde a conclusão. Esta janela continuará aberta para mostrar o resultado."
-                    ),
+                    PCWSTR(wide(i18n::text("launcher.installing")).as_ptr()),
                 );
             }
             thread::spawn(move || {
@@ -127,7 +125,7 @@ unsafe extern "system" fn procedure(
                     Ok(result) => Some(result),
                     Err(mpsc::TryRecvError::Empty) => None,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        Some(Err(error("O instalador foi interrompido.")))
+                        Some(Err(error(i18n::text("launcher.interrupted"))))
                     }
                 });
             if let Some(result) = result {
@@ -137,7 +135,10 @@ unsafe extern "system" fn procedure(
                 }
                 match result {
                     Ok(()) => {
-                        let text = wide(&format!("Integração instalada!\r\n\r\n{USAGE}"));
+                        let text = wide(&i18n::message(
+                            "launcher.installed",
+                            &[&i18n::text("launcher.usage")],
+                        ));
                         unsafe {
                             let _ = SetWindowTextW(state.label, PCWSTR(text.as_ptr()));
                         }
@@ -147,9 +148,7 @@ unsafe extern "system" fn procedure(
                             let _ = EnableWindow(state.install_button, true);
                             let _ = SetWindowTextW(
                                 state.label,
-                                w!(
-                                    "A instalação não foi concluída.\r\n\r\nConfira a mensagem de erro e tente novamente."
-                                ),
+                                PCWSTR(wide(i18n::text("launcher.failed")).as_ptr()),
                             );
                         }
                         crate::ui::show_error(&error.to_string());
@@ -175,19 +174,21 @@ pub fn run() -> Result<()> {
     } // Debug builds may have inherited/created a console.
     let directory = std::env::current_exe()?
         .parent()
-        .ok_or_else(|| error("Pasta da aplicação inválida."))?
+        .ok_or_else(|| error(i18n::text("common.app_directory")))?
         .to_path_buf();
     let installer = directory.join("install.ps1");
     let installed = directory.join(".unbloat-install.json").is_file();
     let text = if installed {
-        format!("Unbloat já está instalado.\r\n\r\n{USAGE}")
-    } else if installer.is_file() {
-        String::from(
-            "Ship the code. Not the node_modules.\r\n\r\nClique em 'Instalar integração' para adicionar 'Compactar com Unbloat' ao botão direito de arquivos e pastas.\r\n\r\nNo Windows 11, a opção fica em 'Mostrar mais opções'.",
+        i18n::message(
+            "launcher.already_installed",
+            &[&i18n::text("launcher.usage")],
         )
+    } else if installer.is_file() {
+        String::from(i18n::text("launcher.welcome"))
     } else {
-        format!(
-            "Abra o unbloat.exe dentro da pasta completa do pacote, junto de install.ps1, da DLL e do config.toml.\r\n\r\n{USAGE}"
+        i18n::message(
+            "launcher.incomplete_package",
+            &[&i18n::text("launcher.usage")],
         )
     };
     let can_install = installer.is_file() && !installed;
@@ -216,7 +217,7 @@ pub fn run() -> Result<()> {
         let hwnd = CreateWindowExW(
             WS_EX_APPWINDOW,
             class.lpszClassName,
-            w!("Unbloat — Instalação e uso"),
+            PCWSTR(wide(i18n::text("launcher.title")).as_ptr()),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -244,7 +245,7 @@ pub fn run() -> Result<()> {
         state.install_button = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("BUTTON"),
-            w!("Instalar integração"),
+            PCWSTR(wide(i18n::text("launcher.install")).as_ptr()),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             24,
             190,
@@ -258,7 +259,7 @@ pub fn run() -> Result<()> {
         state.close_button = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("BUTTON"),
-            w!("Fechar"),
+            PCWSTR(wide(i18n::text("common.close")).as_ptr()),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             484,
             190,

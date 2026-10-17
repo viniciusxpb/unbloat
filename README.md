@@ -55,6 +55,22 @@ uso permanecem na lista de componentes para remoção na desinstalação.
 
 ## Desenvolver
 
+Os textos do aplicativo, menu, instalador e ajuda do `make` ficam em
+`locales/pt-BR.txt` e `locales/en.txt`, ambos em UTF-8. O idioma da interface
+do Windows é detectado automaticamente: português usa o catálogo em português;
+os demais idiomas usam inglês. Para escolher manualmente nesta sessão:
+
+```powershell
+$env:UNBLOAT_LANG = 'en'    # ou 'pt-BR'
+make
+```
+
+O aplicativo e a DLL incorporam os catálogos no build; alterações nos textos
+exigem recompilar. Os scripts leem os mesmos arquivos diretamente, inclusive
+na distribuição e na instalação. Não é preciso instalar pacotes de idioma.
+O menu segue o idioma detectado no processo do Explorer; uma variável definida
+só no terminal se aplica aos programas iniciados por esse terminal.
+
 Requisitos de build: Windows x64, Rust estável **1.93 ou superior**, Visual Studio
 Build Tools (MSVC x64 e Windows SDK). `make` é opcional: os comandos Cargo e
 PowerShell abaixo funcionam diretamente. O runtime C é ligado estaticamente.

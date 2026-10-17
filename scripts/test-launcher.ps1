@@ -4,8 +4,9 @@
 param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96373}'
-$knownClsids = @($clsid, '{C74E4F58-593D-4FB5-AE90-5683C2D96372}', '{C74E4F58-593D-4FB5-AE90-5683C2D96371}')
+. (Join-Path $PSScriptRoot 'i18n.ps1')
+$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96374}'
+$knownClsids = @($clsid, '{C74E4F58-593D-4FB5-AE90-5683C2D96373}', '{C74E4F58-593D-4FB5-AE90-5683C2D96372}', '{C74E4F58-593D-4FB5-AE90-5683C2D96371}')
 if ($knownClsids | Where-Object { Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$_" }) { throw 'Use um usuário de teste sem Unbloat instalado.' }
 $base = Join-Path $root ('target\launcher-validation-' + [Guid]::NewGuid().ToString('N'))
 $portable = Join-Path $base 'portable'
@@ -78,7 +79,7 @@ try {
     Start-Sleep -Milliseconds 2200
     if ($app.HasExited -or -not [UnbloatLauncherTest]::IsWindowVisible($window)) { throw 'Janela fechou ou ficou invisível.' }
     $initialText = Label-Text $window
-    if ($initialText -notlike '*Instalar integração*') { throw "Instruções de instalação ausentes. Texto recebido: $initialText" }
+    if ($initialText -ne (Get-UnbloatText 'launcher.welcome')) { throw "Instruções de instalação ausentes. Texto recebido: $initialText" }
     $button = [UnbloatLauncherTest]::GetDlgItem($window, 10)
     if (-not [UnbloatLauncherTest]::IsWindowEnabled($button)) { throw 'Botão de instalação desabilitado.' }
     $rect = [UnbloatLauncherTest+RECT]::new()
@@ -93,25 +94,26 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
         if ($app.HasExited) { throw 'Janela encerrou durante instalação.' }
-        if ((Label-Text $window) -like '*Integração instalada!*') { break }
+        if ((Label-Text $window) -eq (Get-UnbloatText 'launcher.installed' @((Get-UnbloatText 'launcher.usage')))) { break }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ((Label-Text $window) -notlike '*Integração instalada!*') { throw 'Instalação pela janela não foi concluída.' }
+    if ((Label-Text $window) -ne (Get-UnbloatText 'launcher.installed' @((Get-UnbloatText 'launcher.usage')))) { throw 'Instalação pela janela não foi concluída.' }
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'unbloat.exe'))) { throw 'Instalador não copiou o executável.' }
     Close-App $app
     if ($app.ExitCode -ne 0) { throw 'Janela de instalação encerrou com erro.' }
     $installedApp = Start-App (Join-Path $installed 'unbloat.exe')
     $installedWindow = Wait-Window $installedApp
-    if ((Label-Text $installedWindow) -notlike '*já está instalado*') { throw 'Aplicativo instalado não mostrou instruções de uso.' }
+    if ((Label-Text $installedWindow) -ne (Get-UnbloatText 'launcher.already_installed' @((Get-UnbloatText 'launcher.usage')))) { throw 'Aplicativo instalado não mostrou instruções de uso.' }
     if ([UnbloatLauncherTest]::IsWindowEnabled([UnbloatLauncherTest]::GetDlgItem($installedWindow, 10))) { throw 'Aplicativo instalado não deve tentar sobrescrever seu próprio executável em uso.' }
     Close-App $installedApp
     # GUI subsystem must preserve redirected CLI stdout as well.
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = Join-Path $portable 'unbloat.exe'; $info.Arguments = '--help'
     $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardOutput = $true
+    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false, $true)
     $cli = [Diagnostics.Process]::Start($info)
     $help = $cli.StandardOutput.ReadToEnd(); $cli.WaitForExit()
-    if ($cli.ExitCode -ne 0 -or $help -notlike '*Uso: unbloat*') { throw 'CLI stdout regression.' }
+    if ($cli.ExitCode -ne 0 -or -not $help.StartsWith((Get-UnbloatText 'app.name'))) { throw 'CLI stdout regression.' }
     $cli.Dispose()
 } finally {
     Close-App $app; Close-App $installedApp

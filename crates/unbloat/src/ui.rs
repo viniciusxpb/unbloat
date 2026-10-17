@@ -7,6 +7,7 @@ use std::{
     },
     thread,
 };
+use unbloat::i18n;
 use unbloat::{Result, archiver, config::Config, error, scanner};
 use windows::{
     Win32::{
@@ -27,7 +28,7 @@ pub fn show_error(message: &str) {
         MessageBoxW(
             None,
             PCWSTR(message.as_ptr()),
-            w!("Unbloat"),
+            PCWSTR(wide(i18n::text("app.name")).as_ptr()),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -57,7 +58,10 @@ unsafe extern "system" fn procedure(
                 }
                 state.cancel.store(true, Ordering::Relaxed);
                 unsafe {
-                    let _ = SetWindowTextW(state.label, w!("Cancelando com segurança…"));
+                    let _ = SetWindowTextW(
+                        state.label,
+                        PCWSTR(wide(i18n::text("progress.cancelling")).as_ptr()),
+                    );
                     let _ = EnableWindow(state.button, false);
                 }
                 if state.finished.is_some() {
@@ -82,8 +86,7 @@ unsafe extern "system" fn procedure(
                     match state.result.try_recv() {
                         Ok(result) => state.finished = Some(result),
                         Err(mpsc::TryRecvError::Disconnected) => {
-                            state.finished =
-                                Some(Err(error("O processo de compactação foi interrompido.")))
+                            state.finished = Some(Err(error(i18n::text("progress.interrupted"))))
                         }
                         Err(mpsc::TryRecvError::Empty) => {}
                     }
@@ -93,10 +96,14 @@ unsafe extern "system" fn procedure(
                                 let _ = DestroyWindow(hwnd);
                             }
                         } else if let Ok(path) = result {
-                            let text = wide(&format!("Concluído: {}", path.display()));
+                            let text =
+                                wide(&i18n::message("progress.complete", &[&path.display()]));
                             unsafe {
                                 let _ = SetWindowTextW(state.label, PCWSTR(text.as_ptr()));
-                                let _ = SetWindowTextW(state.button, w!("Fechar"));
+                                let _ = SetWindowTextW(
+                                    state.button,
+                                    PCWSTR(wide(i18n::text("common.close")).as_ptr()),
+                                );
                             }
                         }
                     }
@@ -125,7 +132,7 @@ unsafe extern "system" fn procedure(
 #[allow(clippy::manual_dangling_ptr)] // Win32 MAKEINTRESOURCE/menu IDs are integers cast to pointers.
 pub fn run(paths: Vec<PathBuf>, config: Config) -> Result<()> {
     let cancel = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(Mutex::new(String::from("Analisando arquivos…")));
+    let status = Arc::new(Mutex::new(String::from(i18n::text("progress.scanning"))));
     let (tx, rx) = mpsc::channel();
     let mut state = Box::new(State {
         cancel: cancel.clone(),
@@ -154,7 +161,7 @@ pub fn run(paths: Vec<PathBuf>, config: Config) -> Result<()> {
         let hwnd = CreateWindowExW(
             WS_EX_APPWINDOW,
             class.lpszClassName,
-            w!("Unbloat — Compactando projetos"),
+            PCWSTR(wide(i18n::text("progress.title")).as_ptr()),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -168,7 +175,7 @@ pub fn run(paths: Vec<PathBuf>, config: Config) -> Result<()> {
         state.label = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("STATIC"),
-            w!("Analisando arquivos…"),
+            PCWSTR(wide(i18n::text("progress.scanning")).as_ptr()),
             WS_CHILD | WS_VISIBLE,
             20,
             20,
@@ -182,7 +189,7 @@ pub fn run(paths: Vec<PathBuf>, config: Config) -> Result<()> {
         state.button = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("BUTTON"),
-            w!("Cancelar"),
+            PCWSTR(wide(i18n::text("common.cancel")).as_ptr()),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             435,
             90,
@@ -231,11 +238,11 @@ pub fn run(paths: Vec<PathBuf>, config: Config) -> Result<()> {
     let was_cancelled = cancel.swap(true, Ordering::Relaxed);
     worker
         .join()
-        .map_err(|_| error("Falha inesperada no motor."))?;
+        .map_err(|_| error(i18n::text("progress.engine_failed")))?;
     match state.finished.take() {
         Some(Ok(_)) => Ok(()),
         Some(Err(_)) if was_cancelled => Ok(()),
         Some(Err(e)) => Err(e),
-        None => Err(error("Operação encerrada.")),
+        None => Err(error(i18n::text("progress.closed"))),
     }
 }

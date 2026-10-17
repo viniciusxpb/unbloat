@@ -1,3 +1,4 @@
+use crate::i18n;
 use crate::{
     Result, check_cancel,
     config::Ignore,
@@ -13,7 +14,7 @@ use std::{
 
 pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<Manifest> {
     if paths.is_empty() {
-        return Err(error("Selecione pelo menos um arquivo ou pasta."));
+        return Err(error(i18n::text("scanner.empty")));
     }
     let mut roots = BTreeSet::new();
     for path in paths {
@@ -24,15 +25,17 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
         };
         for ancestor in absolute.ancestors() {
             if is_link(&std::fs::symlink_metadata(ancestor)?) {
-                return Err(error("A seleção passa por um link ou junction."));
+                return Err(error(i18n::text("scanner.link")));
             }
         }
-        let meta = std::fs::symlink_metadata(path)
-            .map_err(|e| error(format!("Não foi possível acessar {}: {e}", path.display())))?;
+        let meta = std::fs::symlink_metadata(path).map_err(|e| {
+            error(i18n::message(
+                "scanner.access_failed",
+                &[&path.display(), &e],
+            ))
+        })?;
         if (!meta.is_dir() && !meta.is_file()) || is_link(&meta) {
-            return Err(error(
-                "Selecione arquivos ou pastas regulares, sem links ou junctions.",
-            ));
+            return Err(error(i18n::text("scanner.regular_only")));
         }
         let root = path.canonicalize()?;
         if root.file_name().is_none()
@@ -41,24 +44,20 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
                     .file_name()
                     .is_some_and(|n| n.eq_ignore_ascii_case(".git")))
         {
-            return Err(error(
-                "Raízes de unidade e diretórios .git não são entradas válidas.",
-            ));
+            return Err(error(i18n::text("scanner.invalid_root")));
         }
         roots.insert(root);
     }
     let roots: Vec<_> = roots.into_iter().collect();
     let destination = roots[0]
         .parent()
-        .ok_or_else(|| error("Pasta sem diretório pai."))?
+        .ok_or_else(|| error(i18n::text("scanner.parent_missing")))?
         .to_path_buf();
     if roots
         .iter()
         .any(|root| root.parent() != Some(destination.as_path()))
     {
-        return Err(error(
-            "Os arquivos e pastas selecionados devem estar no mesmo diretório pai imediato.",
-        ));
+        return Err(error(i18n::text("scanner.same_parent")));
     }
     let mut manifest = Manifest {
         roots: roots.clone(),
@@ -90,9 +89,9 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
             });
         for result in builder.build() {
             check_cancel(cancel)?;
-            let entry = result.map_err(|e| error(format!("Falha na varredura: {e}")))?;
+            let entry = result.map_err(|e| error(i18n::message("scanner.failed", &[&e])))?;
             if let Some(e) = entry.error() {
-                return Err(error(format!("Erro em arquivo de ignore: {e}")));
+                return Err(error(i18n::message("scanner.ignore_error", &[&e])));
             }
             manifest.examined_entries += 1;
             let meta = std::fs::symlink_metadata(entry.path())?;
@@ -103,9 +102,9 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
                 check_ignore_readability(entry.path(), config)?;
             }
             if !meta.is_dir() && !meta.is_file() {
-                return Err(error(format!(
-                    "Arquivo especial não suportado: {}",
-                    entry.path().display()
+                return Err(error(i18n::message(
+                    "scanner.special_file",
+                    &[&entry.path().display()],
                 )));
             }
             manifest.items.push(ArchiveItem {
@@ -139,15 +138,15 @@ fn check_ignore_readability(directory: &Path, config: &Ignore) -> Result<()> {
         match std::fs::symlink_metadata(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
-                return Err(error(format!(
-                    "Não foi possível consultar {}: {e}",
-                    path.display()
+                return Err(error(i18n::message(
+                    "scanner.stat_failed",
+                    &[&path.display(), &e],
                 )));
             }
             Ok(meta) if is_link(&meta) || !meta.is_file() => {
-                return Err(error(format!(
-                    "Arquivo de ignore deve ser regular, sem links: {}",
-                    path.display()
+                return Err(error(i18n::message(
+                    "scanner.ignore_regular",
+                    &[&path.display()],
                 )));
             }
             Ok(_) => {}
@@ -155,9 +154,9 @@ fn check_ignore_readability(directory: &Path, config: &Ignore) -> Result<()> {
         let result = std::fs::File::open(&path)
             .and_then(|mut file| std::io::copy(&mut file, &mut std::io::sink()));
         result.map_err(|e| {
-            error(format!(
-                "Não foi possível ler arquivo de ignore {}: {e}",
-                path.display()
+            error(i18n::message(
+                "scanner.ignore_read_failed",
+                &[&path.display(), &e],
             ))
         })?;
     }
@@ -175,5 +174,5 @@ pub fn included_files(manifest: &Manifest) -> usize {
 pub fn root_name(path: &Path) -> Result<&str> {
     path.file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| error("Nome de arquivo ou pasta inválido."))
+        .ok_or_else(|| error(i18n::text("scanner.invalid_name")))
 }

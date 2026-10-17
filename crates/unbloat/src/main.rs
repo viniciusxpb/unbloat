@@ -1,4 +1,5 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+use unbloat::i18n;
 
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use unbloat::{Result, archiver, config, error, scanner};
@@ -35,26 +36,27 @@ fn run() -> Result<()> {
             development = true;
         } else if arg == "--selection-file" {
             if transport.is_some() {
-                return Err(error("Transporte duplicado."));
+                return Err(error(i18n::text("cli.duplicate_transport")));
             }
             transport = Some(PathBuf::from(
                 args.next()
-                    .ok_or_else(|| error("Falta o arquivo de seleção."))?,
+                    .ok_or_else(|| error(i18n::text("cli.missing_selection")))?,
             ));
         } else if arg == "--help" || arg == "-h" {
             println!(
-                "Unbloat 0.2 — Ship the code. Not the node_modules.\n\nUso: unbloat [--] <arquivo-ou-pasta> [outros itens no mesmo diretório ...]\n     unbloat --dev-run\n\nConfiguração: config.toml ao lado do executável."
+                "{}",
+                i18n::message("cli.help", &[&env!("CARGO_PKG_VERSION")])
             );
             return Ok(());
         } else if arg.to_string_lossy().starts_with('-') {
-            return Err(error("Argumento desconhecido. Use --help."));
+            return Err(error(i18n::text("cli.unknown_argument")));
         } else {
             paths.push(PathBuf::from(arg));
         }
     }
     if let Some(transport) = transport {
         if !paths.is_empty() || development {
-            return Err(error("Não misture seleção interna com outros caminhos."));
+            return Err(error(i18n::text("cli.mixed_transport")));
         }
         #[cfg(windows)]
         {
@@ -63,14 +65,14 @@ fn run() -> Result<()> {
         #[cfg(not(windows))]
         {
             let _ = transport;
-            return Err(error("Transporte disponível apenas em Windows."));
+            return Err(error(i18n::text("cli.windows_only")));
         }
     }
     let config_path = config::location(development)?;
     let config = config::Config::load(&config_path)?;
     if development {
         if !paths.is_empty() {
-            return Err(error("--dev-run usa apenas development.test_input."));
+            return Err(error(i18n::text("cli.development_paths")));
         }
         paths.push(
             config_path
@@ -80,9 +82,7 @@ fn run() -> Result<()> {
         );
     }
     if paths.is_empty() {
-        return Err(error(
-            "Selecione um ou mais arquivos ou pastas, ou use --help.",
-        ));
+        return Err(error(i18n::text("cli.no_selection")));
     }
     #[cfg(windows)]
     if shell {
@@ -96,12 +96,14 @@ fn run() -> Result<()> {
             eprintln!("{message}");
         }
     };
-    status("Analisando arquivos…");
+    status(i18n::text("progress.scanning"));
     let manifest = scanner::scan(&paths, &config.ignore, &cancel)?;
-    status(&format!(
-        "{} arquivos aprovados; {} entradas retornadas pelo scanner.",
-        scanner::included_files(&manifest),
-        manifest.examined_entries
+    status(&i18n::message(
+        "cli.scan_count",
+        &[
+            &scanner::included_files(&manifest),
+            &manifest.examined_entries,
+        ],
     ));
     let path = archiver::create(&manifest, &config, &cancel, &status)?;
     println!("{}", path.display());

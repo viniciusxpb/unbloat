@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *mut *mut c_void,
     ) -> windows::core::HRESULT;
     type Unload = unsafe extern "system" fn() -> windows::core::HRESULT;
-    const CLSID: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373);
+    const CLSID: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96374);
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
     let invoke = args.iter().any(|a| a == "--invoke");
     let cancel = args.iter().any(|a| a == "--cancel");
@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         GetMenuStringW(popup, 0, Some(&mut text), MF_BYPOSITION);
         assert_eq!(
             String::from_utf16_lossy(&text[..text.iter().position(|c| *c == 0).unwrap()]),
-            "Compactar com Unbloat"
+            unbloat_shell::i18n::text("menu.title")
         );
         let bitmap = check_menu_icon(popup, 0)?;
         // A second menu query must reuse a valid bitmap, not replace/delete a
@@ -145,6 +145,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 let window = FindWindowW(w!("UnbloatProgress"), PCWSTR::null()).ok();
                 if let Some(window) = window {
+                    if !saw_window {
+                        let mut title = [0u16; 256];
+                        let len = GetWindowTextW(window, &mut title).max(0) as usize;
+                        assert_eq!(
+                            String::from_utf16_lossy(&title[..len]),
+                            unbloat_shell::i18n::text("progress.title")
+                        );
+                    }
                     saw_window = true;
                     if cancel && !sent_cancel {
                         PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0))?;
@@ -249,7 +257,7 @@ fn check_explorer_menu(paths: &[std::path::PathBuf]) -> Result<(), Box<dyn std::
             let mut text = [0u16; 512];
             let length = GetMenuStringW(popup, index as u32, Some(&mut text), MF_BYPOSITION);
             let title = String::from_utf16_lossy(&text[..length.max(0) as usize]).replace('&', "");
-            if title == "Compactar com Unbloat" {
+            if title == unbloat_shell::i18n::text("menu.title") {
                 check_menu_icon(popup, index as u32)?;
                 found = true;
                 println!(

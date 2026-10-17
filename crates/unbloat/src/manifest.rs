@@ -1,3 +1,4 @@
+use crate::i18n;
 use crate::{Result, error};
 use std::{
     collections::BTreeSet,
@@ -28,20 +29,18 @@ pub fn archive_name(path: &Path) -> Result<String> {
     let mut parts = Vec::new();
     for part in path.components() {
         let Component::Normal(name) = part else {
-            return Err(error(
-                "Caminho interno absoluto ou com travessia não permitido.",
-            ));
+            return Err(error(i18n::text("manifest.traversal")));
         };
         let name = name
             .to_str()
-            .ok_or_else(|| error("Nome de arquivo sem Unicode válido."))?;
+            .ok_or_else(|| error(i18n::text("manifest.unicode")))?;
         if name.is_empty() || name.chars().any(|c| c.is_control() || "/\\:".contains(c)) {
-            return Err(error("Nome inseguro para o arquivo 7z."));
+            return Err(error(i18n::text("manifest.unsafe_name")));
         }
         parts.push(name);
     }
     if parts.is_empty() {
-        return Err(error("Caminho interno vazio."));
+        return Err(error(i18n::text("manifest.empty_name")));
     }
     Ok(parts.join("/"))
 }
@@ -66,9 +65,9 @@ pub fn check_source(item: &ArchiveItem) -> Result<()> {
     for ancestor in item.source_path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)?;
         if is_link(&meta) {
-            return Err(error(format!(
-                "Link/reparse point recusado: {}",
-                ancestor.display()
+            return Err(error(i18n::message(
+                "manifest.link",
+                &[&ancestor.display()],
             )));
         }
     }
@@ -77,9 +76,9 @@ pub fn check_source(item: &ArchiveItem) -> Result<()> {
         || (!item.is_directory
             && (!meta.is_file() || meta.len() != item.size || meta.modified()? != item.modified))
     {
-        return Err(error(format!(
-            "Arquivo alterado durante a operação: {}",
-            item.source_path.display()
+        return Err(error(i18n::message(
+            "manifest.changed",
+            &[&item.source_path.display()],
         )));
     }
     Ok(())
@@ -97,7 +96,7 @@ impl Manifest {
                     .any(|root| item.source_path.starts_with(root))
                 || !names.insert(item.archive_path.to_lowercase())
             {
-                return Err(error("Manifesto inválido ou com caminhos duplicados."));
+                return Err(error(i18n::text("manifest.invalid")));
             }
         }
         Ok(())
