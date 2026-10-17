@@ -66,14 +66,14 @@ make
 ```
 
 O aplicativo e a DLL incorporam os catálogos no build; alterações nos textos
-exigem recompilar. Os scripts leem os mesmos arquivos diretamente, inclusive
-na distribuição e na instalação. Não é preciso instalar pacotes de idioma.
+exigem recompilar; o `cargo xtask` também. Os scripts do instalador leem os
+mesmos arquivos diretamente, inclusive na distribuição e na instalação. Não é preciso instalar pacotes de idioma.
 O menu segue o idioma detectado no processo do Explorer; uma variável definida
 só no terminal se aplica aos programas iniciados por esse terminal.
 
 Requisitos de build: Windows x64, Rust estável **1.93 ou superior**, Visual Studio
-Build Tools (MSVC x64 e Windows SDK). `make` é opcional: os comandos Cargo e
-PowerShell abaixo funcionam diretamente. O runtime C é ligado estaticamente.
+Build Tools (MSVC x64 e Windows SDK). `make` é opcional: os comandos Cargo
+abaixo funcionam diretamente. O runtime C é ligado estaticamente.
 
 ```powershell
 make build      # cargo build --workspace --release --locked
@@ -83,15 +83,30 @@ make install    # build + instalação por usuário
 make uninstall
 make package    # gera dist/Unbloat e ZIP de distribuição
 make benchmark # benchmark real, relatório em target/benchmark/RESULTS.md
+make review     # instruções de code review + git diff --staged na área de transferência
 ```
+
+`make review` junta [CODE_REVIEW.md](CODE_REVIEW.md) (descrição do projeto e o que
+revisar nele) com o diff staged e copia o resultado, pronto para colar numa
+revisão. Sem nada staged, avisa e não altera a área de transferência. No Linux
+usa `wl-copy`, `xclip` ou `xsel`; no macOS, `pbcopy`.
 
 ```powershell
 cargo build --workspace --release --locked
 cargo test --workspace --all-targets --locked
 cargo run -p unbloat -- --dev-run
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-licenses.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
+cargo xtask help          # a mesma ajuda do make
+cargo xtask licenses      # inventário e textos de licença em licenses/
+cargo xtask package       # build release, dist/Unbloat e o ZIP
+cargo xtask localization  # idioma/UTF-8 do make, CLI e instalador; --windows inclui a janela nativa
 ```
+
+As tarefas de desenvolvimento ficam no crate `crates/xtask`, em Rust, com o alias
+definido em `.cargo/config.toml`; o Makefile as chama. Elas não usam PowerShell e
+não entram na distribuição. O PowerShell continua apenas no que é específico do
+Windows: `install.ps1`, `uninstall.ps1` (e `i18n.ps1`, que eles usam) e os testes
+de Explorer/registro `scripts/test-shell.ps1` e `scripts/test-launcher.ps1`.
+Fora do Windows, `cargo xtask package` gera um pacote só com a CLI.
 
 Para publicar uma nova versão, altere somente `version` em `[workspace.package]`
 no `Cargo.toml` da raiz e execute:
@@ -203,8 +218,10 @@ APIs verificadas nas fontes de `sevenz-rust2` **0.23.0**, `ignore` **0.4.33** e
 
 Código/ícone próprios: [MIT](LICENSE). Dependências e textos originais:
 [licenses/THIRD_PARTY.md](licenses/THIRD_PARTY.md). `Cargo.lock` fixa as versões.
-`collect-licenses.ps1` confere as expressões e copia licenças/avisos de todas as
-crates bloqueadas, incluindo dependências específicas de outras plataformas.
+`cargo xtask licenses` confere as expressões e copia licenças/avisos de todas as
+crates de que o produto depende (dependências normais e de build), incluindo as
+específicas de outras plataformas. Dependências só de desenvolvimento, como as
+do próprio xtask, não entram.
 Execute novamente ao atualizar dependências e revise antes de publicar.
 
 `licenses/DEPENDENCIES.md` e `licenses/source-notices/` são gerados e ficam fora

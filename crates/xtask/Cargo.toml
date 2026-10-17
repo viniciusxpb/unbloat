@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+description = "Portable development tasks for Unbloat (cargo xtask). Never shipped."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde_json = "1"
+time = { version = "0.3", features = ["local-offset"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_WindowsAndMessaging"] }

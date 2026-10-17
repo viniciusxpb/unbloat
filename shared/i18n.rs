@@ -24,34 +24,35 @@ pub fn from_tag(tag: &str) -> Language {
 
 pub fn language() -> Language {
     static LANGUAGE: OnceLock<Language> = OnceLock::new();
-    *LANGUAGE.get_or_init(|| {
-        if let Ok(tag) = std::env::var("UNBLOAT_LANG")
-            && !tag.trim().is_empty()
-        {
-            return from_tag(tag.trim());
-        }
-        #[cfg(windows)]
-        {
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn GetUserDefaultUILanguage() -> u16;
-            }
-            // LANG_PORTUGUESE, including both Brazil and Portugal.
-            if unsafe { GetUserDefaultUILanguage() } & 0x3ff == 0x16 {
-                Language::Portuguese
-            } else {
-                Language::English
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            ["LC_ALL", "LC_MESSAGES", "LANG"]
-                .iter()
-                .filter_map(|name| std::env::var(name).ok())
-                .find(|tag| !tag.is_empty())
-                .map_or(Language::English, |tag| from_tag(&tag))
-        }
+    *LANGUAGE.get_or_init(|| match std::env::var("UNBLOAT_LANG") {
+        Ok(tag) if !tag.trim().is_empty() => from_tag(tag.trim()),
+        _ => system_language(),
     })
+}
+
+/// The Windows UI language or POSIX locale, ignoring the UNBLOAT_LANG override.
+pub fn system_language() -> Language {
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+        }
+        // LANG_PORTUGUESE, including both Brazil and Portugal.
+        if unsafe { GetUserDefaultUILanguage() } & 0x3ff == 0x16 {
+            Language::Portuguese
+        } else {
+            Language::English
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .find(|tag| !tag.is_empty())
+            .map_or(Language::English, |tag| from_tag(&tag))
+    }
 }
 
 fn catalog(language: Language) -> &'static [(&'static str, &'static str)] {
@@ -62,6 +63,11 @@ fn catalog(language: Language) -> &'static [(&'static str, &'static str)] {
 }
 
 pub fn text(key: &str) -> &'static str {
+    text_for(language(), key)
+}
+
+/// Text in a specific language, falling back to English like `text`.
+pub fn text_for(language: Language, key: &str) -> &'static str {
     fn lookup(language: Language, key: &str) -> Option<&'static str> {
         let entries = catalog(language);
         entries
@@ -69,7 +75,7 @@ pub fn text(key: &str) -> &'static str {
             .ok()
             .map(|index| entries[index].1)
     }
-    lookup(language(), key)
+    lookup(language, key)
         .or_else(|| lookup(Language::English, key))
         .expect("Unknown localization key")
 }

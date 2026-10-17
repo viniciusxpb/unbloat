@@ -317,20 +317,58 @@ fn rejects_invalid_selection_config_and_names() {
         )
         .is_err()
     );
-    assert!(
-        scanner::scan(
-            &[tree.0.join("missing")],
-            &config().ignore,
-            &AtomicBool::new(false)
-        )
-        .is_err()
-    );
+    let missing = scanner::scan(
+        &[tree.0.join("missing")],
+        &config().ignore,
+        &AtomicBool::new(false),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(missing.contains("missing"), "path absent from: {missing}");
     for name in ["../escape", "/absolute", "C:/drive"] {
         assert!(unbloat::manifest::archive_name(Path::new(name)).is_err());
     }
     let text = include_str!("../../../config.toml");
     assert!(Config::parse(&text.replace("level = 5", "level = 99")).is_err());
     assert!(Config::parse(&text.replace("solid = true", "solidd = true")).is_err());
+}
+
+#[test]
+fn displayed_paths_omit_verbatim_prefix_when_safe() {
+    use unbloat::display_path;
+    assert_eq!(
+        display_path(Path::new(r"\\?\C:\proj\a.7z")),
+        r"C:\proj\a.7z"
+    );
+    assert_eq!(
+        display_path(Path::new(r"\\?\UNC\server\share\a.7z")),
+        r"\\server\share\a.7z"
+    );
+    assert_eq!(display_path(Path::new(r"C:\proj\a.7z")), r"C:\proj\a.7z");
+    // Other verbatim forms and long paths are shown as they must be typed.
+    assert_eq!(
+        display_path(Path::new(r"\\?\Volume{x}\a")),
+        r"\\?\Volume{x}\a"
+    );
+    let long = format!(r"\\?\C:\{}", "a".repeat(300));
+    assert_eq!(display_path(Path::new(&long)), long);
+}
+
+#[test]
+fn preserved_config_from_older_version_still_loads() {
+    let shipped = include_str!("../../../config.toml").replace("\r\n", "\n");
+    assert_eq!(config(), Config::default());
+    // A reinstall keeps the user's file, which may predate newer keys.
+    let older = shipped
+        .replace("solid_block_size_mb = 64\n", "")
+        .replace("[logging]\nenabled = true\n", "");
+    assert!(!older.contains("solid_block_size_mb") && !older.contains("[logging]"));
+    let older = Config::parse(&older).unwrap();
+    assert_eq!(older, Config::default());
+    let customized = Config::parse("[compression]\nlevel = 9\n").unwrap();
+    assert_eq!(customized.compression.level, 9);
+    assert_eq!(customized.output, Config::default().output);
+    assert!(Config::parse("[compresion]\nlevel = 9\n").is_err());
 }
 
 #[test]
@@ -412,7 +450,7 @@ fn cancellation_and_mutation_after_encoding_leave_no_published_archive() {
     let cancel = AtomicBool::new(false);
     assert!(
         archiver::create(&manifest, &config(), &cancel, &|message| {
-            if message.starts_with("Validando") {
+            if message == unbloat::i18n::text("progress.verifying") {
                 cancel.store(true, Ordering::Relaxed);
             }
         })
@@ -420,7 +458,7 @@ fn cancellation_and_mutation_after_encoding_leave_no_published_archive() {
     );
     assert!(
         archiver::create(&manifest, &config(), &AtomicBool::new(false), &|message| {
-            if message.starts_with("Validando") {
+            if message == unbloat::i18n::text("progress.verifying") {
                 tree.put("project/a.txt", "changed after reading");
             }
         })

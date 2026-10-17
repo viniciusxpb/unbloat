@@ -106,7 +106,7 @@ fn run() -> Result<()> {
         ],
     ));
     let path = archiver::create(&manifest, &config, &cancel, &status)?;
-    println!("{}", path.display());
+    println!("{}", unbloat::display_path(&path));
     Ok(())
 }
 

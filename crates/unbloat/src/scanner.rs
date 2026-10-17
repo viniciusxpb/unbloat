@@ -16,28 +16,32 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
     if paths.is_empty() {
         return Err(error(i18n::text("scanner.empty")));
     }
+    let access_failed = |path: &Path, e: std::io::Error| {
+        error(i18n::message(
+            "scanner.access_failed",
+            &[&crate::display_path(path), &e],
+        ))
+    };
     let mut roots = BTreeSet::new();
     for path in paths {
+        // First, so a missing selection is reported with its path.
+        let meta = std::fs::symlink_metadata(path).map_err(|e| access_failed(path, e))?;
         let absolute = if path.is_absolute() {
             path.clone()
         } else {
             std::env::current_dir()?.join(path)
         };
         for ancestor in absolute.ancestors() {
-            if is_link(&std::fs::symlink_metadata(ancestor)?) {
+            let ancestor_meta =
+                std::fs::symlink_metadata(ancestor).map_err(|e| access_failed(ancestor, e))?;
+            if is_link(&ancestor_meta) {
                 return Err(error(i18n::text("scanner.link")));
             }
         }
-        let meta = std::fs::symlink_metadata(path).map_err(|e| {
-            error(i18n::message(
-                "scanner.access_failed",
-                &[&path.display(), &e],
-            ))
-        })?;
         if (!meta.is_dir() && !meta.is_file()) || is_link(&meta) {
             return Err(error(i18n::text("scanner.regular_only")));
         }
-        let root = path.canonicalize()?;
+        let root = path.canonicalize().map_err(|e| access_failed(path, e))?;
         if root.file_name().is_none()
             || (meta.is_dir()
                 && root
@@ -94,7 +98,8 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
                 return Err(error(i18n::message("scanner.ignore_error", &[&e])));
             }
             manifest.examined_entries += 1;
-            let meta = std::fs::symlink_metadata(entry.path())?;
+            let meta = std::fs::symlink_metadata(entry.path())
+                .map_err(|e| access_failed(entry.path(), e))?;
             if is_link(&meta) {
                 continue;
             }
@@ -104,7 +109,7 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
             if !meta.is_dir() && !meta.is_file() {
                 return Err(error(i18n::message(
                     "scanner.special_file",
-                    &[&entry.path().display()],
+                    &[&crate::display_path(entry.path())],
                 )));
             }
             manifest.items.push(ArchiveItem {
@@ -140,13 +145,13 @@ fn check_ignore_readability(directory: &Path, config: &Ignore) -> Result<()> {
             Err(e) => {
                 return Err(error(i18n::message(
                     "scanner.stat_failed",
-                    &[&path.display(), &e],
+                    &[&crate::display_path(&path), &e],
                 )));
             }
             Ok(meta) if is_link(&meta) || !meta.is_file() => {
                 return Err(error(i18n::message(
                     "scanner.ignore_regular",
-                    &[&path.display()],
+                    &[&crate::display_path(&path)],
                 )));
             }
             Ok(_) => {}
@@ -156,7 +161,7 @@ fn check_ignore_readability(directory: &Path, config: &Ignore) -> Result<()> {
         result.map_err(|e| {
             error(i18n::message(
                 "scanner.ignore_read_failed",
-                &[&path.display(), &e],
+                &[&crate::display_path(&path), &e],
             ))
         })?;
     }

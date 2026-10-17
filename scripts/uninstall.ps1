@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'i18n.ps1')
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 if ($InstallDir -eq [IO.Path]::GetPathRoot($InstallDir)) { throw (Get-UnbloatText 'uninstall.invalid_directory') }
+# After the drive-root check: directory comparisons assume no trailing separator.
+$InstallDir = $InstallDir.TrimEnd('\')
 $marker = Join-Path $InstallDir '.unbloat-install.json'
 if (-not (Test-Path -LiteralPath $marker)) {
     if (-not (Test-Path -LiteralPath $InstallDir)) { Write-Host (Get-UnbloatText 'uninstall.already_removed'); return }

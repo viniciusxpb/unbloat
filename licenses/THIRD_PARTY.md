@@ -7,7 +7,7 @@ The release includes sevenz-rust2 0.23.0 (Apache-2.0), lzma-rust2 0.21.0
 (Apache-2.0), ignore (MIT OR Unlicense), windows/windows-core (MIT OR Apache-2.0),
 serde (MIT OR Apache-2.0), and toml (MIT OR Apache-2.0), plus their transitive
 dependencies. The exact locked dependency inventory and original license/notice
-texts are generated into this directory by `scripts/collect-licenses.ps1`.
+texts are generated into this directory by `cargo xtask licenses`.
 These generated files are excluded from Git. Repository packaging and development
 installation regenerate them automatically; binary distributions include them.
 

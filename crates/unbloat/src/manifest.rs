@@ -62,23 +62,31 @@ pub fn is_link(metadata: &Metadata) -> bool {
 
 /// Recheck ancestors too: a directory can have been replaced by a junction since scanning.
 pub fn check_source(item: &ArchiveItem) -> Result<()> {
+    let metadata = |path: &Path| {
+        std::fs::symlink_metadata(path).map_err(|e| {
+            error(i18n::message(
+                "manifest.access_failed",
+                &[&crate::display_path(path), &e],
+            ))
+        })
+    };
     for ancestor in item.source_path.ancestors() {
-        let meta = std::fs::symlink_metadata(ancestor)?;
+        let meta = metadata(ancestor)?;
         if is_link(&meta) {
             return Err(error(i18n::message(
                 "manifest.link",
-                &[&ancestor.display()],
+                &[&crate::display_path(ancestor)],
             )));
         }
     }
-    let meta = std::fs::symlink_metadata(&item.source_path)?;
+    let meta = metadata(&item.source_path)?;
     if meta.is_dir() != item.is_directory
         || (!item.is_directory
             && (!meta.is_file() || meta.len() != item.size || meta.modified()? != item.modified))
     {
         return Err(error(i18n::message(
             "manifest.changed",
-            &[&item.source_path.display()],
+            &[&crate::display_path(&item.source_path)],
         )));
     }
     Ok(())

@@ -96,8 +96,10 @@ unsafe extern "system" fn procedure(
                                 let _ = DestroyWindow(hwnd);
                             }
                         } else if let Ok(path) = result {
-                            let text =
-                                wide(&i18n::message("progress.complete", &[&path.display()]));
+                            let text = wide(&i18n::message(
+                                "progress.complete",
+                                &[&unbloat::display_path(path)],
+                            ));
                             unsafe {
                                 let _ = SetWindowTextW(state.label, PCWSTR(text.as_ptr()));
                                 let _ = SetWindowTextW(

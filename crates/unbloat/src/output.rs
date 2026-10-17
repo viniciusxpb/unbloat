@@ -36,7 +36,7 @@ impl TemporaryOutput {
                 Err(e) => {
                     return Err(error(i18n::message(
                         "output.temporary_failed",
-                        &[&directory.display(), &e],
+                        &[&crate::display_path(directory), &e],
                     )));
                 }
             }
@@ -78,7 +78,7 @@ impl TemporaryOutput {
                 Err(e) => {
                     return Err(error(i18n::message(
                         "output.publish_failed",
-                        &[&final_path.display(), &e],
+                        &[&crate::display_path(&final_path), &e],
                     )));
                 }
             }

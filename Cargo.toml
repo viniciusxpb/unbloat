@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/unbloat", "crates/unbloat-shell"]
+members = ["crates/unbloat", "crates/unbloat-shell", "crates/xtask"]
 resolver = "2"
 
 [workspace.package]

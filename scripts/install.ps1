@@ -15,6 +15,8 @@ if (-not $SourceDir) {
 $SourceDir = [IO.Path]::GetFullPath($SourceDir)
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 if ($InstallDir -eq [IO.Path]::GetPathRoot($InstallDir)) { throw (Get-UnbloatText 'install.invalid_directory') }
+# After the drive-root check: relative names and directory comparisons assume no trailing separator.
+$InstallDir = $InstallDir.TrimEnd('\')
 if (Test-Path -LiteralPath $InstallDir) {
     if ((Get-Item -LiteralPath $InstallDir).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw (Get-UnbloatText 'install.link') }
 }
@@ -23,9 +25,13 @@ $dll = Join-Path $SourceDir 'unbloat-shell.dll'
 if (-not (Test-Path -LiteralPath $dll)) { $dll = Join-Path $SourceDir 'unbloat_shell.dll' }
 foreach ($file in @($exe, $dll)) { if (-not (Test-Path -LiteralPath $file)) { throw (Get-UnbloatText 'install.missing_file' @($file)) } }
 $resources = if (Test-Path -LiteralPath (Join-Path $SourceDir 'LICENSE')) { $SourceDir } else { $repository }
-if ($resources -eq $repository -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'collect-licenses.ps1'))) {
+if ($resources -eq $repository -and (Test-Path -LiteralPath (Join-Path $repository 'Cargo.toml'))) {
     # Development installs regenerate notices excluded from the source repository.
-    & (Join-Path $PSScriptRoot 'collect-licenses.ps1')
+    Push-Location $repository
+    try {
+        & cargo xtask licenses
+        if ($LASTEXITCODE -ne 0) { throw (Get-UnbloatText 'install.missing_notices') }
+    } finally { Pop-Location }
 }
 foreach ($file in @('config.toml', 'LICENSE', 'licenses\THIRD_PARTY.md', 'licenses\DEPENDENCIES.md', 'locales\en.txt', 'locales\pt-BR.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $resources $file))) { throw (Get-UnbloatText 'install.missing_resource' @($file)) }

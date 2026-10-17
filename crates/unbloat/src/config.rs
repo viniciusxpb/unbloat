@@ -3,8 +3,11 @@ use crate::{Result, error};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+// Reinstallation preserves the user's config.toml, so every field has a default:
+// a key added in a later version must not break an existing installation.
+// Unknown keys are still rejected to catch typos; keep removed keys accepted.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub compression: Compression,
     pub ignore: Ignore,
@@ -12,8 +15,8 @@ pub struct Config {
     pub logging: Logging,
     pub development: Development,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Compression {
     pub format: String,
     pub method: String,
@@ -21,8 +24,19 @@ pub struct Compression {
     pub solid: bool,
     pub solid_block_size_mb: u64,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl Default for Compression {
+    fn default() -> Self {
+        Self {
+            format: "7z".into(),
+            method: "lzma2".into(),
+            level: 5,
+            solid: true,
+            solid_block_size_mb: 64,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Ignore {
     pub gitignore: bool,
     pub dot_ignore: bool,
@@ -30,27 +44,62 @@ pub struct Ignore {
     pub include_hidden: bool,
     pub follow_symlinks: bool,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl Default for Ignore {
+    fn default() -> Self {
+        Self {
+            gitignore: true,
+            dot_ignore: true,
+            exclude_git_directory: true,
+            include_hidden: true,
+            follow_symlinks: false,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Output {
     pub suffix: String,
     pub on_conflict: String,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl Default for Output {
+    fn default() -> Self {
+        Self {
+            suffix: "-unbloat".into(),
+            on_conflict: "rename".into(),
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Logging {
     pub enabled: bool,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl Default for Logging {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Development {
     pub test_input: PathBuf,
+}
+impl Default for Development {
+    fn default() -> Self {
+        Self {
+            test_input: "./tests/fixtures/workspace".into(),
+        }
+    }
 }
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| error(i18n::message("config.read_failed", &[&path.display(), &e])))?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            error(i18n::message(
+                "config.read_failed",
+                &[&crate::display_path(path), &e],
+            ))
+        })?;
         Self::parse(&text)
     }
 

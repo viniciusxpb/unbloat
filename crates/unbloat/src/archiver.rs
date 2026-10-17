@@ -76,8 +76,12 @@ impl<'a> CheckedReader<'a> {
 }
 impl Read for CheckedReader<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_checked(buf)
-            .map_err(|e| io::Error::other(format!("{}: {e}", self.item.source_path.display())))
+        self.read_checked(buf).map_err(|e| {
+            io::Error::other(format!(
+                "{}: {e}",
+                crate::display_path(&self.item.source_path)
+            ))
+        })
     }
 }
 
