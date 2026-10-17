@@ -1,0 +1,23 @@
+[compression]
+format = "7z"
+method = "lzma2"
+level = 5
+solid = true
+solid_block_size_mb = 64
+
+[ignore]
+gitignore = true
+dot_ignore = true
+exclude_git_directory = true
+include_hidden = true
+follow_symlinks = false
+
+[output]
+suffix = "-unbloat"
+on_conflict = "rename"
+
+[logging]
+enabled = true
+
+[development]
+test_input = "./tests/fixtures/workspace"

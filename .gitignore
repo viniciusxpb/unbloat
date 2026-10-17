@@ -1,0 +1,38 @@
+# Build output and release packages
+/target/
+/dist/
+*.exe
+*.dll
+*.pdb
+*.rlib
+*.rmeta
+*.obj
+*.res
+*.exp
+*.lib
+
+# Generated archive output
+*.7z
+*.unbloat-part
+
+# Generated dependency notices (regenerated before packaging/installing)
+/licenses/DEPENDENCIES.md
+/licenses/source-notices/
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+!.env.sample
+/.aws/
+
+# Local editor/OS files
+.vs/
+*.user
+*.suo
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
