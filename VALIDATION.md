@@ -7,11 +7,28 @@ MSVC + Windows SDK, independent 7-Zip 26.01. Builds require stable Rust >= 1.93.
 
 ## Completed
 
+- Double-click regression fixed: launching `unbloat.exe` without arguments now
+  opens a persistent native welcome/install window instead of briefly opening
+  a console and exiting. The release uses the Windows GUI subsystem.
+  `scripts/test-launcher.ps1` verified window persistence, installation through
+  the actual button/installer in an isolated directory, installed-app usage
+  instructions, and redirected CLI stdout. The temporary registration was
+  removed. A captured native-window image was inspected for readable layout.
 - Engine preflight passed **before** shell implementation: two projects with
   distinct ignore files, real scanner/manifest, real LZMA2 solid compression,
   real extraction and content/hierarchy comparison.
-- `cargo test --workspace --all-targets --locked`: 12 passing test cases
-  (10 engine cases + shared transport roundtrip/cleanup in each package).
+- `cargo test --workspace --all-targets --locked`: 14 passing test cases
+  (12 engine cases + shared transport roundtrip/cleanup in each package).
+- Individual image files, multiple selected files and mixed file/folder
+  manifests round-tripped successfully. Explicitly selected files are included
+  without loading parent ignore rules; ignore rules still apply inside selected
+  directories. The installer now registers both file and directory handlers.
+- The user's installed folder-only handler was migrated while its DLL remained
+  loaded in Explorer. A content-named DLL and a new COM identity avoided
+  overwriting the mapped DLL or restarting Explorer. The Windows shell itself
+  composed menus containing a top-level Unbloat entry for a PNG image, a folder,
+  and a mixed selection (`shell_probe --explorer-menu`). Registered invocation
+  of the installed handler compressed the PNG successfully.
 - `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets
   --locked -- -D warnings`: passed.
 - Release executable and native COM DLL built. PE imports inspected with

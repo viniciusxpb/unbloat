@@ -106,7 +106,7 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<PathBuf>> {
         }
         let count = number(&mut cursor)?;
         if count == 0 || count > 10000 {
-            return Err(io::Error::other("Quantidade de pastas inválida."));
+            return Err(io::Error::other("Quantidade de itens inválida."));
         }
         let mut paths = Vec::new();
         for _ in 0..count {

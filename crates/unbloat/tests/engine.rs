@@ -451,3 +451,45 @@ fn symbolic_links_are_excluded_when_supported_by_host() {
         Err(e) => panic!("Unexpected symlink creation failure: {e}"),
     }
 }
+
+#[test]
+fn explicitly_selected_image_is_archived_without_loading_parent_rules() {
+    let tree = Tree::new();
+    tree.put(".gitignore", "*.png\n");
+    tree.put("foto ç.png", "");
+    let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128, 1];
+    fs::write(tree.0.join("foto ç.png"), png).unwrap();
+    let manifest = scan(&tree, &["foto ç.png"]);
+    assert_eq!(manifest.items.len(), 1);
+    assert_eq!(manifest.items[0].archive_path, "foto ç.png");
+    assert!(!manifest.items[0].is_directory);
+    let archive = archiver::create(&manifest, &config(), &AtomicBool::new(false), &|_| {}).unwrap();
+    assert_eq!(archive.file_name().unwrap(), "foto ç.png-unbloat.7z");
+    assert_eq!(
+        extract(&archive, &tree.0.join("out")),
+        BTreeMap::from([("foto ç.png".into(), png.to_vec())])
+    );
+    assert_eq!(fs::read(tree.0.join("foto ç.png")).unwrap(), png);
+}
+
+#[test]
+fn mixed_files_and_folders_preserve_selection_and_directory_ignore_rules() {
+    let tree = Tree::new();
+    tree.put("read me.txt", "explicit text");
+    tree.put("empty file", "");
+    tree.put("project/.gitignore", "target/\n");
+    tree.put("project/src/main.rs", "fn main() {}\n");
+    tree.put("project/target/excluded", "do not archive");
+    let manifest = scan(&tree, &["read me.txt", "empty file", "project"]);
+    assert_eq!(scanner::included_files(&manifest), 4);
+    let archive = archiver::create(&manifest, &config(), &AtomicBool::new(false), &|_| {}).unwrap();
+    assert_eq!(
+        extract(&archive, &tree.0.join("out")),
+        BTreeMap::from([
+            ("read me.txt".into(), b"explicit text".to_vec()),
+            ("empty file".into(), vec![]),
+            ("project/.gitignore".into(), b"target/\n".to_vec()),
+            ("project/src/main.rs".into(), b"fn main() {}\n".to_vec()),
+        ])
+    );
+}

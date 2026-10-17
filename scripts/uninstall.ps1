@@ -10,8 +10,10 @@ if (-not (Test-Path -LiteralPath $marker)) {
 }
 if ((Get-Item -LiteralPath $InstallDir).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Diretório de instalação é link/junction.' }
 $manifest = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
-if ($manifest.product -ne 'Unbloat' -or $manifest.clsid -ne $clsid) { throw 'Marcador de instalação inválido.' }
+$currentClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
+$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
+if ($manifest.product -ne 'Unbloat' -or $manifest.clsid -notin @($currentClsid, $legacyClsid)) { throw 'Marcador de instalação inválido.' }
+$clsid = $manifest.clsid
 $prefix = $InstallDir.TrimEnd('\') + '\'
 $targets = foreach ($relative in $manifest.files) {
     $target = [IO.Path]::GetFullPath((Join-Path $InstallDir $relative))
@@ -25,10 +27,11 @@ $targets = foreach ($relative in $manifest.files) {
 }
 $classKey = "HKCU:\Software\Classes\CLSID\$clsid"
 $handlerKey = 'HKCU:\Software\Classes\Directory\shellex\ContextMenuHandlers\Unbloat'
+$fileHandlerKey = 'HKCU:\Software\Classes\*\shellex\ContextMenuHandlers\Unbloat'
 $registration = Get-Item -LiteralPath "$classKey\InprocServer32" -ErrorAction SilentlyContinue
 $registered = if ($registration) { $registration.GetValue('') } else { $null }
-if ($registered -and [IO.Path]::GetFullPath($registered) -ne (Join-Path $InstallDir 'unbloat-shell.dll')) { throw 'Outra instalação está registrada; não será removida.' }
-foreach ($key in @($handlerKey, $classKey)) { if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force } }
+if ($registered -and [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($registered)) -ne $InstallDir) { throw 'Outra instalação está registrada; não será removida.' }
+foreach ($key in @($handlerKey, $fileHandlerKey, $classKey)) { if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force } }
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class UnbloatUninstallNotify { [DllImport("shell32.dll")] public static extern void SHChangeNotify(uint e, uint f, IntPtr a, IntPtr b); }'
 [UnbloatUninstallNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 $locked = @()

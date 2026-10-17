@@ -20,7 +20,10 @@ use windows::{
     core::{Error, GUID, HRESULT, IUnknown, Interface, PSTR, Ref, Result, implement, w},
 };
 
-pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96371);
+// A new class identity prevents Explorer from reusing the older folder-only
+// handler already cached in its process. Keep the previous identity compatible.
+pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96372);
+const CLSID_LEGACY: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96371);
 static MODULE: AtomicIsize = AtomicIsize::new(0);
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static LOCKS: AtomicUsize = AtomicUsize::new(0);
@@ -110,7 +113,7 @@ impl IShellExtInit_Impl for Handler_Impl {
                 // Only a shallow metadata lookup; no recursion or archive code here.
                 use std::os::windows::fs::MetadataExt;
                 let meta = std::fs::symlink_metadata(&path).map_err(|e| failure(e.to_string()))?;
-                if !meta.is_dir() || meta.file_attributes() & 0x400 != 0 {
+                if (!meta.is_dir() && !meta.is_file()) || meta.file_attributes() & 0x400 != 0 {
                     return Err(Error::from(E_INVALIDARG));
                 }
                 paths.push(path);
@@ -287,7 +290,7 @@ pub unsafe extern "system" fn DllGetClassObject(
     unsafe {
         *out = std::ptr::null_mut();
     }
-    if unsafe { *clsid } != CLSID_UNBLOAT {
+    if unsafe { *clsid } != CLSID_UNBLOAT && unsafe { *clsid } != CLSID_LEGACY {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
     let factory: IUnknown = Factory {

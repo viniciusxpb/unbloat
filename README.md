@@ -2,21 +2,25 @@
 
 **Ship the code. Not the node_modules.**
 
-Utilitário Windows 10/11 x64 em Rust. Compacta uma pasta ou várias pastas irmãs
+Utilitário Windows 10/11 x64 em Rust. Compacta arquivos e/ou pastas no mesmo diretório
 em `.7z` com LZMA2, respeitando `.gitignore` e `.ignore` aninhados. Funciona sem
 Git, Rust ou 7-Zip instalados no computador de destino. Não usa rede ou telemetria.
 
 ## Instalar e usar
 
-Extraia `Unbloat-0.2.0-windows-x64.zip`, abra PowerShell **64 bits** na pasta
-extraída e execute:
+Extraia `Unbloat-0.2.0-windows-x64.zip`, abra **unbloat.exe** e clique em
+**Instalar integração**. A janela permanece aberta durante a instalação e mostra
+o resultado. Abrir o executável sem argumentos mostra essa janela de instalação
+e instruções de uso, sem um console que desaparece imediatamente.
+
+Como alternativa, abra PowerShell **64 bits** na pasta extraída e execute:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 A instalação por usuário fica em `%LOCALAPPDATA%\Programs\Unbloat`, sem admin.
-Selecione uma ou várias pastas irmãs, clique com o botão direito e escolha
+Selecione um ou mais arquivos e/ou pastas no mesmo diretório, clique com o botão direito e escolha
 **Compactar com Unbloat**. No Windows 11, use **Mostrar mais opções**. A entrada
 é direta, sem submenu. A janela nativa informa a atividade; **Cancelar** ou
 fechar a janela solicita cancelamento e espera a limpeza segura. Ao concluir,
@@ -24,7 +28,12 @@ a janela mostra o destino e fecha automaticamente após dois segundos.
 
 Uma pasta gera `pasta-unbloat.7z` ao lado da original. Várias pastas geram
 `Unbloat-AAAAMMDD-HHMMSS.7z` no pai imediato comum. Colisões usam `-2`, `-3` etc.
-Uma seleção de pastas com pais diferentes é recusada.
+Um arquivo individual gera, por exemplo, `foto.png-unbloat.7z`. Seleções de
+vários arquivos ou de arquivos com pastas usam o mesmo nome com data/hora.
+Os itens selecionados precisam ter o mesmo diretório pai imediato.
+Arquivos selecionados explicitamente entram no arquivo como escolhidos, sem
+carregar regras do diretório pai. Nas pastas selecionadas, as regras de ignore
+continuam sendo aplicadas recursivamente.
 
 Para desinstalar:
 
@@ -37,6 +46,11 @@ bloqueados. Feche o aplicativo e saia/entre na sessão do Windows antes de tenta
 novamente. Os scripts não encerram o Explorer nem exigem elevação. Reinstalações
 preservam `config.toml`. A desinstalação preserva arquivos extras que você colocou
 na pasta de instalação. Não modifica registros do 7-Zip.
+
+O instalador grava a DLL COM com um nome baseado no seu hash. A migração do
+handler anterior, que aceitava apenas pastas, usa uma nova identidade COM para
+que o Explorer não reutilize a versão antiga carregada. DLLs antigas ainda em
+uso permanecem na lista de componentes para remoção na desinstalação.
 
 ## Desenvolver
 
@@ -133,6 +147,16 @@ seleções de uma, duas e três pastas, Unicode/espaços, cancelamento, instala�
 ativação COM pelo registro, reinstalação, arquivos em uso e desinstalação. Esse
 teste registra temporariamente o handler real no HKCU e remove tudo no `finally`;
 nunca o execute sobre uma instalação de produção existente.
+Com `-PortableOnly`, testa também arquivos individuais (incluindo PNG), vários
+arquivos e seleções mistas sem alterar o registro ou a instalação existente.
+O probe também aceita `--explorer-menu`: nesse modo pede ao Shell do Windows
+para compor o menu real registrado e verifica a presença direta da opção.
+
+Após gerar o pacote, `scripts/test-launcher.ps1` verifica o duplo clique sem
+argumentos: janela persistente, botão executando o instalador real em destino
+isolado, instruções no aplicativo instalado e saída de CLI redirecionada.
+Também remove os registros temporários ao terminar e exige um usuário sem
+instalação de produção existente.
 
 A renderização/posição visual no menu do Explorer precisa também ser conferida
 manualmente em Windows 10 e no menu clássico do Windows 11. O probe testa o

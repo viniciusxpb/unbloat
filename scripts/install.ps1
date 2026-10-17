@@ -5,7 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not [Environment]::Is64BitProcess) { throw 'Execute o PowerShell de 64 bits.' }
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
+$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
+$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
 $repository = Split-Path $PSScriptRoot
 if (-not $SourceDir) {
     $SourceDir = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'unbloat.exe')) { $PSScriptRoot } else { Join-Path $repository 'target\release' }
@@ -29,11 +30,16 @@ foreach ($file in @('config.toml', 'LICENSE', 'licenses\THIRD_PARTY.md', 'licens
     if (-not (Test-Path -LiteralPath (Join-Path $resources $file))) { throw "Recurso ausente: $file" }
 }
 if (-not (Test-Path -LiteralPath (Join-Path $resources 'licenses\source-notices') -PathType Container)) { throw 'Avisos de dependências ausentes.' }
-# Copy before touching the registry. A DLL held by Explorer causes a clear error;
-# never kill Explorer or overwrite a DLL already loaded in another process.
+# Copy before touching the registry. A content-named DLL allows migration from
+# the previous handler even while Explorer still has that old DLL mapped.
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -LiteralPath $exe -Destination (Join-Path $InstallDir 'unbloat.exe') -Force
-Copy-Item -LiteralPath $dll -Destination (Join-Path $InstallDir 'unbloat-shell.dll') -Force
+$dllHash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+$installedDllName = 'unbloat-shell-' + $dllHash.Substring(0, 16) + '.dll'
+$installedDll = Join-Path $InstallDir $installedDllName
+if (Test-Path -LiteralPath $installedDll) {
+    if ((Get-FileHash -LiteralPath $installedDll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dllHash) { throw 'A DLL de destino não corresponde ao hash esperado.' }
+} else { Copy-Item -LiteralPath $dll -Destination $installedDll }
 if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'config.toml'))) {
     Copy-Item -LiteralPath (Join-Path $resources 'config.toml') -Destination $InstallDir
 }
@@ -44,17 +50,28 @@ foreach ($script in @('install.ps1', 'uninstall.ps1')) {
     $target = Join-Path $InstallDir $script
     if ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($target)) { Copy-Item -LiteralPath $source -Destination $target -Force }
 }
-$ownedFiles = @('unbloat.exe', 'unbloat-shell.dll', 'config.toml', 'LICENSE', 'install.ps1', 'uninstall.ps1')
+$ownedFiles = @('unbloat.exe', $installedDllName, 'config.toml', 'LICENSE', 'install.ps1', 'uninstall.ps1')
+# Preserve the ownership list of older installations, including DLLs that may
+# remain mapped until Explorer exits; uninstallation can retry them safely.
+$previousMarker = Join-Path $InstallDir '.unbloat-install.json'
+if (Test-Path -LiteralPath $previousMarker) {
+    $previous = Get-Content -LiteralPath $previousMarker -Raw | ConvertFrom-Json
+    if ($previous.product -eq 'Unbloat' -and $previous.clsid -in @($clsid, $legacyClsid)) { $ownedFiles += @($previous.files) }
+}
 $ownedFiles += Get-ChildItem -LiteralPath (Join-Path $InstallDir 'licenses') -File -Recurse | ForEach-Object { $_.FullName.Substring($InstallDir.Length + 1) }
-@{ product = 'Unbloat'; clsid = $clsid; files = $ownedFiles } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir '.unbloat-install.json') -Encoding UTF8
+@{ product = 'Unbloat'; clsid = $clsid; shell_dll = $installedDllName; files = @($ownedFiles | Sort-Object -Unique) } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir '.unbloat-install.json') -Encoding UTF8
 $classKey = "HKCU:\Software\Classes\CLSID\$clsid"
 $handlerKey = 'HKCU:\Software\Classes\Directory\shellex\ContextMenuHandlers\Unbloat'
+$fileHandlerKey = 'HKCU:\Software\Classes\*\shellex\ContextMenuHandlers\Unbloat'
 New-Item -Path "$classKey\InprocServer32" -Force | Out-Null
 Set-Item -LiteralPath $classKey -Value 'Unbloat context menu'
-Set-Item -LiteralPath "$classKey\InprocServer32" -Value (Join-Path $InstallDir 'unbloat-shell.dll')
+Set-Item -LiteralPath "$classKey\InprocServer32" -Value $installedDll
 New-ItemProperty -LiteralPath "$classKey\InprocServer32" -Name ThreadingModel -Value Apartment -PropertyType String -Force | Out-Null
-New-Item -Path $handlerKey -Force | Out-Null
-Set-Item -LiteralPath $handlerKey -Value $clsid
+foreach ($key in @($handlerKey, $fileHandlerKey)) {
+    # Registry APIs treat the '*' file-class name literally, never as a wildcard.
+    $registryKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($key.Substring('HKCU:\'.Length))
+    try { $registryKey.SetValue('', $clsid) } finally { $registryKey.Dispose() }
+}
 try {
     $instance = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid, $true))
     $unknown = [Runtime.InteropServices.Marshal]::GetIUnknownForObject($instance)
@@ -71,10 +88,17 @@ try {
     }
 } catch {
     Remove-Item -LiteralPath $handlerKey -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $fileHandlerKey -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $classKey -Recurse -Force -ErrorAction SilentlyContinue
     throw "Falha ao ativar o COM por usuário. Registros revertidos. $($_.Exception.Message)"
 }
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class UnbloatInstallNotify { [DllImport("shell32.dll")] public static extern void SHChangeNotify(uint e, uint f, IntPtr a, IntPtr b); }'
+# Retire only the previous class registration belonging to this installation.
+$legacyKey = "HKCU:\Software\Classes\CLSID\$legacyClsid"
+$legacyServer = Get-Item -LiteralPath "$legacyKey\InprocServer32" -ErrorAction SilentlyContinue
+if ($legacyServer -and [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($legacyServer.GetValue(''))) -eq $InstallDir) {
+    Remove-Item -LiteralPath $legacyKey -Recurse -Force
+}
 [UnbloatInstallNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 Write-Host "Unbloat instalado em $InstallDir. Registro COM e interfaces validados."
-Write-Host 'No Windows 11: botão direito na pasta > Mostrar mais opções > Compactar com Unbloat.'
+Write-Host 'No Windows 11: botão direito em arquivos e/ou pastas > Mostrar mais opções > Compactar com Unbloat.'

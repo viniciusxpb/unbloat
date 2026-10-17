@@ -13,7 +13,7 @@ use std::{
 
 pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<Manifest> {
     if paths.is_empty() {
-        return Err(error("Selecione pelo menos uma pasta."));
+        return Err(error("Selecione pelo menos um arquivo ou pasta."));
     }
     let mut roots = BTreeSet::new();
     for path in paths {
@@ -29,14 +29,17 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
         }
         let meta = std::fs::symlink_metadata(path)
             .map_err(|e| error(format!("Não foi possível acessar {}: {e}", path.display())))?;
-        if !meta.is_dir() || is_link(&meta) {
-            return Err(error("Selecione pastas regulares, sem links ou junctions."));
+        if (!meta.is_dir() && !meta.is_file()) || is_link(&meta) {
+            return Err(error(
+                "Selecione arquivos ou pastas regulares, sem links ou junctions.",
+            ));
         }
         let root = path.canonicalize()?;
         if root.file_name().is_none()
-            || root
-                .file_name()
-                .is_some_and(|n| n.eq_ignore_ascii_case(".git"))
+            || (meta.is_dir()
+                && root
+                    .file_name()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(".git")))
         {
             return Err(error(
                 "Raízes de unidade e diretórios .git não são entradas válidas.",
@@ -54,7 +57,7 @@ pub fn scan(paths: &[PathBuf], config: &Ignore, cancel: &AtomicBool) -> Result<M
         .any(|root| root.parent() != Some(destination.as_path()))
     {
         return Err(error(
-            "As pastas selecionadas devem ter o mesmo diretório pai imediato.",
+            "Os arquivos e pastas selecionados devem estar no mesmo diretório pai imediato.",
         ));
     }
     let mut manifest = Manifest {
@@ -172,5 +175,5 @@ pub fn included_files(manifest: &Manifest) -> usize {
 pub fn root_name(path: &Path) -> Result<&str> {
     path.file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| error("Nome de pasta inválido."))
+        .ok_or_else(|| error("Nome de arquivo ou pasta inválido."))
 }

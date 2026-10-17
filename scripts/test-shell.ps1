@@ -1,10 +1,11 @@
 ﻿# This test temporarily registers Unbloat in HKCU and always unregisters it.
 [CmdletBinding()]
-param()
+param([switch]$PortableOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
-if (Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid") { throw 'Uma instalação já existe. Use um usuário de teste sem Unbloat instalado.' }
+$clsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96372}'
+$legacyClsid = '{C74E4F58-593D-4FB5-AE90-5683C2D96371}'
+if (-not $PortableOnly -and ((Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid") -or (Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$legacyClsid"))) { throw 'Uma instalação já existe. Use -PortableOnly ou um usuário de teste sem Unbloat instalado.' }
 $base = Join-Path $root ('target\shell-validation-' + [Guid]::NewGuid().ToString('N'))
 $installed = Join-Path $base 'installed'
 $portable = Join-Path $base 'portable'
@@ -27,18 +28,31 @@ foreach ($folder in $folders) {
     [IO.File]::WriteAllText((Join-Path $folder 'src\main.txt'), ('source code' * 3000))
     [IO.File]::WriteAllText((Join-Path $folder 'node_modules\excluded'), 'must not be archived')
 }
+$image = Join-Path $projects ('foto ' + [char]0x00E7 + '.png')
+[IO.File]::WriteAllBytes($image, [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='))
+$textFile = Join-Path $projects 'read me.txt'
+[IO.File]::WriteAllText($textFile, 'explicit selected file')
 try {
     $dll = Join-Path $portable 'unbloat_shell.dll'
     Invoke-Probe $dll @($folders[0]) @('--invoke'); $results += '- PASS: single folder, separate process, native UI'
     Invoke-Probe $dll @($folders[0], $folders[1]) @('--invoke'); $results += '- PASS: two siblings, Unicode and spaces'
     Invoke-Probe $dll $folders @('--invoke'); $results += '- PASS: three siblings'
+    Invoke-Probe $dll @($image) @('--invoke'); $results += '- PASS: individual PNG image with Unicode/spaces'
+    Invoke-Probe $dll @($image, $textFile) @('--invoke'); $results += '- PASS: multiple individual files'
+    Invoke-Probe $dll @($image, $folders[0]) @('--invoke'); $results += '- PASS: mixed file and folder selection'
     $large = Join-Path $folders[2] 'large.bin'
     $file = [IO.File]::Create($large); $file.SetLength(256MB); $file.Dispose()
     Invoke-Probe $dll @($folders[2]) @('--invoke', '--cancel'); $results += '- PASS: safe cancellation, no archive published'
     Remove-Item -LiteralPath $large
+    if ($PortableOnly) {
+        $results | Set-Content -LiteralPath (Join-Path $root 'target\SHELL-RESULTS.md') -Encoding UTF8
+        $results | Write-Output
+        return
+    }
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install.ps1') -InstallDir $installed
     if ($LASTEXITCODE -ne 0) { throw 'Instalação falhou' }
-    Invoke-Probe (Join-Path $installed 'unbloat-shell.dll') @($folders[0], $folders[1]) @('--invoke', '--registered')
+    $installedManifest = Get-Content -LiteralPath (Join-Path $installed '.unbloat-install.json') -Raw | ConvertFrom-Json
+    Invoke-Probe (Join-Path $installed $installedManifest.shell_dll) @($folders[0], $folders[1]) @('--invoke', '--registered')
     $results += '- PASS: per-user installation, registered COM activation and invocation'
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install.ps1') -InstallDir $installed
     if ($LASTEXITCODE -ne 0) { throw 'Reinstalação falhou' }
@@ -81,6 +95,7 @@ try {
 }
 if (Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid") { throw 'Registro COM não removido' }
 if (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\shellex\ContextMenuHandlers\Unbloat') { throw 'Handler não removido' }
+if (Test-Path -LiteralPath 'HKCU:\Software\Classes\*\shellex\ContextMenuHandlers\Unbloat') { throw 'Handler de arquivos não removido' }
 if (Test-Path -LiteralPath $installed) { throw 'Componentes instalados não removidos' }
 if (Get-ChildItem -LiteralPath $projects -Filter '*.unbloat-part' -Force) { throw 'Temporário não removido' }
 $results += '- PASS: uninstallation and registry cleanup'

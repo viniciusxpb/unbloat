@@ -1,5 +1,9 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use unbloat::{Result, archiver, config, error, scanner};
+#[cfg(windows)]
+mod launcher;
 #[cfg(windows)]
 #[allow(dead_code)] // The DLL writes this same protocol; the executable only reads it.
 #[path = "../../unbloat-shell/src/selection.rs"]
@@ -9,6 +13,10 @@ mod ui;
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).peekable();
+    #[cfg(windows)]
+    if args.peek().is_none() {
+        return launcher::run();
+    }
     let mut shell = false;
     let mut development = false;
     let mut paths = Vec::new();
@@ -35,7 +43,7 @@ fn run() -> Result<()> {
             ));
         } else if arg == "--help" || arg == "-h" {
             println!(
-                "Unbloat 0.2 — Ship the code. Not the node_modules.\n\nUso: unbloat [--] <pasta> [pasta irmã ...]\n     unbloat --dev-run\n\nConfiguração: config.toml ao lado do executável."
+                "Unbloat 0.2 — Ship the code. Not the node_modules.\n\nUso: unbloat [--] <arquivo-ou-pasta> [outros itens no mesmo diretório ...]\n     unbloat --dev-run\n\nConfiguração: config.toml ao lado do executável."
             );
             return Ok(());
         } else if arg.to_string_lossy().starts_with('-') {
@@ -72,7 +80,9 @@ fn run() -> Result<()> {
         );
     }
     if paths.is_empty() {
-        return Err(error("Selecione uma ou mais pastas, ou use --help."));
+        return Err(error(
+            "Selecione um ou mais arquivos ou pastas, ou use --help.",
+        ));
     }
     #[cfg(windows)]
     if shell {
@@ -99,10 +109,14 @@ fn run() -> Result<()> {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args_os().len() > 1 && !std::env::args_os().any(|a| a == "--shell") {
+        launcher::attach_parent_console();
+    }
     if let Err(e) = run() {
         eprintln!("Unbloat: {e}");
         #[cfg(windows)]
-        if std::env::args_os().any(|a| a == "--shell") {
+        if std::env::args_os().len() == 1 || std::env::args_os().any(|a| a == "--shell") {
             ui::show_error(&e.to_string());
         }
         std::process::exit(1);
