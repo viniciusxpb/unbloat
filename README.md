@@ -8,7 +8,7 @@ Git, Rust ou 7-Zip instalados no computador de destino. Não usa rede ou telemet
 
 ## Instalar e usar
 
-Extraia `Unbloat-0.2.0-windows-x64.zip`, abra **unbloat.exe** e clique em
+Extraia o ZIP de distribuição `Unbloat-<versão>-windows-x64.zip`, abra **unbloat.exe** e clique em
 **Instalar integração**. A janela permanece aberta durante a instalação e mostra
 o resultado. Abrir o executável sem argumentos mostra essa janela de instalação
 e instruções de uso, sem um console que desaparece imediatamente.
@@ -76,6 +76,19 @@ cargo run -p unbloat -- --dev-run
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-licenses.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
+
+Para publicar uma nova versão, altere somente `version` em `[workspace.package]`
+no `Cargo.toml` da raiz e execute:
+
+```powershell
+cargo check --workspace  # sincroniza Cargo.lock com a versão nova
+make test
+make package
+```
+
+O build usa essa versão nos metadados do executável Windows e o empacotamento
+gera `dist/Unbloat-<versão>-windows-x64.zip` automaticamente. O `Cargo.lock`
+atualizado deve acompanhar o código no Git.
 
 O executável também aceita caminhos diretamente:
 

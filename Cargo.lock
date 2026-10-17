@@ -353,7 +353,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "unbloat"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ignore",
  "serde",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "unbloat-shell"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "windows",
  "windows-core",

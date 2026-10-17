@@ -1,7 +1,9 @@
+#include "unbloat-version.h"
+
 1 ICON "unbloat.ico"
 1 VERSIONINFO
-FILEVERSION 0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION UNBLOAT_VERSION
+PRODUCTVERSION UNBLOAT_VERSION
 FILEOS 0x40004L
 FILETYPE 0x1L
 BEGIN
@@ -11,7 +13,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "Unbloat - Ship the code. Not the node_modules.\0"
       VALUE "ProductName", "Unbloat\0"
-      VALUE "FileVersion", "0.2.0\0"
+      VALUE "FileVersion", UNBLOAT_VERSION_STRING
+      VALUE "ProductVersion", UNBLOAT_VERSION_STRING
       VALUE "OriginalFilename", "unbloat.exe\0"
       VALUE "LegalCopyright", "MIT License\0"
     END

@@ -1,4 +1,19 @@
-.PHONY: build test run install uninstall package benchmark
+.DEFAULT_GOAL := help
+
+.PHONY: help build test run install uninstall package benchmark
+
+help:
+	@echo Uso: make [comando]
+	@echo ------------------------------------------------------------
+	@echo Comandos disponíveis:
+	@echo   help        Mostra esta ajuda.
+	@echo   build       Compila o executável e a DLL em modo release.
+	@echo   test        Executa os testes e verifica formatação e clippy.
+	@echo   run         Executa usando development.test_input do config.toml.
+	@echo   install     Compila e instala a integração para o usuário atual.
+	@echo   uninstall   Remove a integração e os arquivos da instalação.
+	@echo   package     Compila e gera a distribuição e o ZIP em dist/.
+	@echo   benchmark   Executa o benchmark e gera o relatório em target/benchmark/.
 
 build:
 	cargo build --workspace --release --locked
