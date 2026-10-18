@@ -1,6 +1,10 @@
-# UNBLOAT
+<p align="center">
+  <img src="assets/unbloat.svg" alt="Unbloat" width="96">
+</p>
 
-**Ship the code. Not the node_modules.**
+<h1 align="center">UNBLOAT</h1>
+
+<p align="center"><b>Ship the code. Not the node_modules.</b></p>
 
 Clique com o botão direito numa pasta, escolha **Compactar com Unbloat** e pronto:
 você recebe um `.7z` só com o que importa, respeitando o `.gitignore` e o `.ignore`
