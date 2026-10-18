@@ -135,6 +135,7 @@ install.missing_notices=Avisos de dependências ausentes.
 install.copy_failed=Não foi possível copiar para {0}: {1}. Feche o Unbloat se estiver aberto e tente novamente.
 install.hash=A DLL de destino não corresponde ao hash esperado.
 install.com_failed=Falha ao ativar o COM por usuário. Registros revertidos. {0}
+install.rollback_failed=Não foi possível ativar o COM por usuário: {0}. Não foi possível restaurar completamente o registro anterior: {1}.
 install.complete=Unbloat instalado em {0}. Registro COM e interfaces validados.
 install.usage=No Windows 11: botão direito em arquivos e/ou pastas > Mostrar mais opções > Compactar com Unbloat.
 uninstall.invalid_directory=Diretório inválido.

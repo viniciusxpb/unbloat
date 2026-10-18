@@ -83,6 +83,7 @@ impl Marker {
     }
 
     fn write(&self, dir: &Path) -> Result<()> {
+        check_no_links(&dir.join(MARKER), "install.link")?;
         let mut text = serde_json::to_string_pretty(self)?;
         text.push('\n');
         Ok(fs::write(dir.join(MARKER), text)?)
@@ -101,7 +102,9 @@ pub fn default_dir() -> Result<PathBuf> {
 
 /// Validates an installation target before anything else is checked.
 pub fn install_dir(dir: &Path) -> Result<PathBuf> {
-    normalize(dir, "install.invalid_directory")
+    let dir = normalize(dir, "install.invalid_directory")?;
+    check_no_links(&dir, "install.link")?;
+    Ok(dir)
 }
 
 /// Absolute and without a trailing separator; drive roots are refused.
@@ -123,8 +126,18 @@ fn same_path(a: &Path, b: &Path) -> bool {
     key(a) == key(b)
 }
 
-fn reparse_point(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| is_link(&meta))
+/// Check the leaf as well as every ancestor, including ancestors of the install
+/// directory. Missing components are allowed when preparing a new installation.
+fn check_no_links(path: &Path, message: &str) -> Result<()> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(meta) if is_link(&meta) => return Err(error(i18n::text(message))),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
 }
 
 /// The installation directory the registered COM class points to, if any.
@@ -133,11 +146,18 @@ pub fn registered_dir() -> Option<PathBuf> {
         .and_then(|dll| Path::new(&dll).parent().map(Path::to_path_buf))
 }
 
-/// The installation to manage: an explicit override, else the one registered
-/// for this user (it may have been installed elsewhere), else the default.
+/// The installation to manage: an explicit override, the running installed
+/// copy, the registered installation for this user, or the default directory.
 pub fn target_dir() -> Result<PathBuf> {
+    target_dir_from(&std::env::current_exe()?)
+}
+
+fn target_dir_from(exe: &Path) -> Result<PathBuf> {
     if std::env::var_os("UNBLOAT_INSTALL_DIR").is_some_and(|d| !d.is_empty()) {
         return default_dir();
+    }
+    if let Some(dir) = exe.parent().filter(|dir| is_installed(dir)) {
+        return Ok(dir.to_path_buf());
     }
     match registered_dir().filter(|dir| is_installed(dir)) {
         Some(dir) => Ok(dir),
@@ -205,6 +225,7 @@ fn dll_name(hash: &str) -> String {
 /// Retries briefly while the target is in use: an Unbloat window that just
 /// closed may still be exiting. A running compression still fails clearly.
 fn copy(from: &Path, to: &Path) -> Result<()> {
+    check_no_links(to, "install.link")?;
     const SHARING_VIOLATION: i32 = 32;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
@@ -227,10 +248,12 @@ fn copy(from: &Path, to: &Path) -> Result<()> {
 }
 
 /// Relative paths of all files below `root\relative`, with `\` separators.
-fn files_below(root: &Path, relative: &str, out: &mut Vec<String>) -> io::Result<()> {
+fn files_below(root: &Path, relative: &str, out: &mut Vec<String>) -> Result<()> {
+    check_no_links(&root.join(relative), "install.link")?;
     for entry in fs::read_dir(root.join(relative))? {
         let entry = entry?;
         let name = format!(r"{relative}\{}", entry.file_name().to_string_lossy());
+        check_no_links(&entry.path(), "install.link")?;
         if entry.file_type()?.is_dir() {
             files_below(root, &name, out)?;
         } else {
@@ -241,6 +264,8 @@ fn files_below(root: &Path, relative: &str, out: &mut Vec<String>) -> io::Result
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    check_no_links(to, "install.link")?;
+    check_no_links(from, "install.link")?;
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
@@ -307,21 +332,15 @@ fn remove_empty_dirs(dir: &Path, files: &[String]) {
 /// `relative` must stay inside the installation, without links on the way.
 fn owned_path(dir: &Path, relative: &str) -> Result<PathBuf> {
     let relative = Path::new(relative);
-    if !relative
-        .components()
-        .all(|c| matches!(c, Component::Normal(_)))
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
     {
         return Err(error(i18n::text("uninstall.outside")));
     }
     let path = dir.join(relative);
-    if path
-        .ancestors()
-        .skip(1)
-        .take_while(|ancestor| *ancestor != dir)
-        .any(reparse_point)
-    {
-        return Err(error(i18n::text("uninstall.inner_link")));
-    }
+    check_no_links(&path, "uninstall.inner_link")?;
     Ok(path)
 }
 
@@ -342,13 +361,6 @@ fn activate() -> windows::core::Result<()> {
     }
 }
 
-fn unregister() {
-    for key in HANDLERS {
-        let _ = registry::delete(key);
-    }
-    let _ = registry::delete(&class_key(&CLSID));
-}
-
 /// Older class registrations that point into this installation.
 fn retire_legacy(dir: &Path) {
     for clsid in &LEGACY {
@@ -363,40 +375,11 @@ fn retire_legacy(dir: &Path) {
 /// Copies the package into `dir` and registers the context menu for this user.
 /// Reinstalling keeps the user's config.toml and cleans files of older versions.
 pub fn install(package: &Package, dir: &Path) -> Result<PathBuf> {
-    let dir = normalize(dir, "install.invalid_directory")?;
-    if reparse_point(&dir) {
-        return Err(error(i18n::text("install.link")));
-    }
+    let dir = install_dir(dir)?;
     sweep();
     let previous = Marker::read(&dir).ok().flatten();
-    fs::create_dir_all(&dir)?;
-    // Files first: the registry only ever points at a complete installation.
-    let exe = dir.join("unbloat.exe");
-    if !same_path(&package.exe, &exe) {
-        copy(&package.exe, &exe)?;
-    }
-    let hash = sha256(&package.dll)?;
-    let dll = dll_name(&hash);
+    let (dll, files) = copy_package(package, &dir)?;
     let dll_path = dir.join(&dll);
-    if dll_path.is_file() {
-        if sha256(&dll_path)? != hash {
-            return Err(error(i18n::text("install.hash")));
-        }
-    } else {
-        copy(&package.dll, &dll_path)?;
-    }
-    if !dir.join("config.toml").exists() {
-        copy(&package.dir.join("config.toml"), &dir.join("config.toml"))?;
-    }
-    copy(&package.dir.join("LICENSE"), &dir.join("LICENSE"))?;
-    copy_tree(&package.dir.join("licenses"), &dir.join("licenses"))?;
-    let mut files = vec![
-        "unbloat.exe".to_owned(),
-        dll.clone(),
-        "config.toml".to_owned(),
-        "LICENSE".to_owned(),
-    ];
-    files_below(&dir, "licenses", &mut files)?;
     // Files of earlier versions: removed below, listed until then.
     let obsolete: Vec<String> = previous
         .map(|marker| marker.files)
@@ -412,26 +395,26 @@ pub fn install(package: &Package, dir: &Path) -> Result<PathBuf> {
     };
     marker.write(&dir)?;
     let class = class_key(&CLSID);
-    let registration = (|| {
-        registry::set(&class, None, "Unbloat context menu")?;
-        registry::set(
-            &format!(r"{class}\InprocServer32"),
-            None,
-            &dll_path.to_string_lossy(),
-        )?;
-        registry::set(
-            &format!(r"{class}\InprocServer32"),
-            Some("ThreadingModel"),
-            "Apartment",
-        )?;
-        for key in HANDLERS {
-            registry::set(key, None, &braced(&CLSID))?;
-        }
-        activate()
-    })();
+    let server = format!(r"{class}\InprocServer32");
+    let dll_text = dll_path.to_string_lossy();
+    let clsid = braced(&CLSID);
+    let changes = [
+        registry::Change::new(&class, None, "Unbloat context menu"),
+        registry::Change::new(&server, None, &dll_text),
+        registry::Change::new(&server, Some("ThreadingModel"), "Apartment"),
+        registry::Change::new(HANDLERS[0], None, &clsid),
+        registry::Change::new(HANDLERS[1], None, &clsid),
+    ];
+    let registration = registry::apply(&changes, activate);
     if let Err(e) = registration {
-        unregister();
-        return Err(error(i18n::message("install.com_failed", &[&e.message()])));
+        notify_shell();
+        return Err(error(match e.rollback {
+            Some(rollback) => i18n::message(
+                "install.rollback_failed",
+                &[&e.cause.message(), &rollback.message()],
+            ),
+            None => i18n::message("install.com_failed", &[&e.cause.message()]),
+        }));
     }
     retire_legacy(&dir);
     notify_shell();
@@ -446,6 +429,42 @@ pub fn install(package: &Package, dir: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Enumerate ownership from the package, never from the existing destination.
+/// Preflight all planned file paths before replacing any installed files.
+fn copy_package(package: &Package, dir: &Path) -> Result<(String, Vec<String>)> {
+    let hash = sha256(&package.dll)?;
+    let dll = dll_name(&hash);
+    let mut files = vec![
+        "unbloat.exe".to_owned(),
+        dll.clone(),
+        "config.toml".to_owned(),
+        "LICENSE".to_owned(),
+    ];
+    files_below(&package.dir, "licenses", &mut files)?;
+    for relative in files.iter().map(String::as_str).chain([MARKER, "licenses"]) {
+        check_no_links(&dir.join(relative), "install.link")?;
+    }
+    fs::create_dir_all(dir)?;
+    let exe = dir.join("unbloat.exe");
+    if !same_path(&package.exe, &exe) {
+        copy(&package.exe, &exe)?;
+    }
+    let dll_path = dir.join(&dll);
+    if dll_path.is_file() {
+        if sha256(&dll_path)? != hash {
+            return Err(error(i18n::text("install.hash")));
+        }
+    } else {
+        copy(&package.dll, &dll_path)?;
+    }
+    if !dir.join("config.toml").exists() {
+        copy(&package.dir.join("config.toml"), &dir.join("config.toml"))?;
+    }
+    copy(&package.dir.join("LICENSE"), &dir.join("LICENSE"))?;
+    copy_tree(&package.dir.join("licenses"), &dir.join("licenses"))?;
+    Ok((dll, files))
+}
+
 pub enum Uninstalled {
     Removed,
     AlreadyRemoved,
@@ -455,15 +474,13 @@ pub enum Uninstalled {
 /// file the user added. Works from the installed executable itself.
 pub fn uninstall(dir: &Path) -> Result<Uninstalled> {
     let dir = normalize(dir, "uninstall.invalid_directory")?;
+    check_no_links(&dir.join(MARKER), "uninstall.inner_link")?;
     let Some(mut marker) = Marker::read(&dir)? else {
         return match dir.exists() {
             false => Ok(Uninstalled::AlreadyRemoved),
             true => Err(error(i18n::text("uninstall.missing_marker"))),
         };
     };
-    if reparse_point(&dir) {
-        return Err(error(i18n::text("uninstall.link")));
-    }
     sweep();
     let targets = marker
         .files
@@ -508,6 +525,173 @@ pub fn uninstall(dir: &Path) -> Result<Uninstalled> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "unbloat-setup-test-{}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn put(&self, relative: &str, data: &str) {
+            let path = self.0.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, data).unwrap();
+        }
+
+        fn package(&self) -> Package {
+            self.put("package/unbloat.exe", "new executable");
+            self.put("package/unbloat-shell.dll", "new DLL");
+            self.put("package/config.toml", "default config");
+            self.put("package/LICENSE", "license");
+            self.put("package/licenses/THIRD_PARTY.md", "third party");
+            self.put(
+                "package/licenses/source-notices/dependency/LICENSE",
+                "notice",
+            );
+            let dir = self.0.join("package");
+            Package {
+                exe: dir.join("unbloat.exe"),
+                dll: dir.join("unbloat-shell.dll"),
+                dir,
+            }
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct Junction(PathBuf);
+
+    impl Junction {
+        fn new(link: PathBuf, target: &Path) -> Self {
+            let output = std::process::Command::new("cmd.exe")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(&link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Self(link)
+        }
+    }
+
+    impl Drop for Junction {
+        fn drop(&mut self) {
+            fs::remove_dir(&self.0).unwrap(); // Remove only the junction, never its target.
+        }
+    }
+
+    #[test]
+    fn reinstall_tracks_only_package_files_and_keeps_user_config() {
+        let tree = Tree::new();
+        let package = tree.package();
+        let dir = tree.0.join("installed");
+        copy_package(&package, &dir).unwrap();
+        tree.put("installed/config.toml", "user config");
+        tree.put("installed/licenses/personal.txt", "keep me");
+        tree.put(
+            "installed/licenses/source-notices/personal/note.txt",
+            "also keep me",
+        );
+        let (_, files) = copy_package(&package, &dir).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            "user config"
+        );
+        // Exercise the exact removal list that uninstall consumes, without COM.
+        for file in &files {
+            remove(&owned_path(&dir, file).unwrap()).unwrap();
+        }
+        remove_empty_dirs(&dir, &files);
+        assert_eq!(
+            fs::read_to_string(dir.join("licenses/personal.txt")).unwrap(),
+            "keep me"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("licenses/source-notices/personal/note.txt")).unwrap(),
+            "also keep me"
+        );
+        assert!(!dir.join("unbloat.exe").exists());
+    }
+
+    #[test]
+    fn refuses_destination_junctions_before_replacing_files() {
+        let tree = Tree::new();
+        let package = tree.package();
+        tree.put("installed/unbloat.exe", "old executable");
+        tree.put("external/THIRD_PARTY.md", "unrelated data");
+        let dir = tree.0.join("installed");
+        let _junction = Junction::new(dir.join("licenses"), &tree.0.join("external"));
+        assert!(copy_package(&package, &dir).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("unbloat.exe")).unwrap(),
+            "old executable"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.0.join("external/THIRD_PARTY.md")).unwrap(),
+            "unrelated data"
+        );
+    }
+
+    #[test]
+    fn refuses_junction_ancestors_and_linked_file_destinations() {
+        let tree = Tree::new();
+        let package = tree.package();
+        tree.put("external/installed/keep.txt", "keep me");
+        let _junction = Junction::new(tree.0.join("alias"), &tree.0.join("external"));
+        let dir = tree.0.join("alias/installed");
+        assert!(install_dir(&dir).is_err());
+        assert!(owned_path(&dir, "keep.txt").is_err());
+        assert!(uninstall(&dir).is_err());
+        assert_eq!(
+            fs::read_to_string(tree.0.join("external/installed/keep.txt")).unwrap(),
+            "keep me"
+        );
+
+        tree.put("installed/unbloat.exe", "old executable");
+        let dir = tree.0.join("installed");
+        let _leaf = Junction::new(dir.join("LICENSE"), &tree.0.join("external"));
+        assert!(copy_package(&package, &dir).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("unbloat.exe")).unwrap(),
+            "old executable"
+        );
+    }
+
+    #[test]
+    fn custom_installation_is_resolved_from_the_running_executable() {
+        let tree = Tree::new();
+        tree.put("custom/.unbloat-install.json", "{}");
+        // Passing an arbitrary executable path avoids changing process-wide env
+        // variables or the user's real COM registration in this test.
+        let exe = tree.0.join("custom/unbloat.exe");
+        if std::env::var_os("UNBLOAT_INSTALL_DIR").is_some_and(|d| !d.is_empty()) {
+            assert_eq!(target_dir_from(&exe).unwrap(), default_dir().unwrap());
+        } else {
+            assert_eq!(target_dir_from(&exe).unwrap(), exe.parent().unwrap());
+        }
+    }
 
     #[test]
     fn identifiers_match_the_powershell_installer() {
@@ -547,6 +731,7 @@ mod tests {
         let dir = Path::new(r"C:\Users\x\AppData\Local\Programs\Unbloat");
         assert!(owned_path(dir, r"licenses\LICENSE").is_ok());
         for outside in [
+            "",
             r"..\evil.dll",
             r"C:\Windows\System32\kernel32.dll",
             r"\x",

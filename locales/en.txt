@@ -135,6 +135,7 @@ install.missing_notices=Dependency notices are missing.
 install.copy_failed=Could not copy to {0}: {1}. Close Unbloat if it is running and try again.
 install.hash=The destination DLL does not match the expected hash.
 install.com_failed=Could not activate per-user COM. Registration rolled back. {0}
+install.rollback_failed=Could not activate per-user COM: {0}. Could not fully restore the previous registration: {1}.
 install.complete=Unbloat installed in {0}. COM registration and interfaces validated.
 install.usage=On Windows 11: right-click files and/or folders > Show more options > Compress with Unbloat.
 uninstall.invalid_directory=Invalid directory.

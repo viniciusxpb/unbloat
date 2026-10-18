@@ -149,7 +149,7 @@ fn run_setup(action: Setup, dir: Option<PathBuf>) -> Result<()> {
     {
         let dir = match dir {
             Some(dir) => dir,
-            None => setup::default_dir()?,
+            None => setup::target_dir()?,
         };
         match action {
             Setup::Install => {
