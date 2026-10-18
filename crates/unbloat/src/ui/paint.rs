@@ -36,6 +36,7 @@ pub mod palette {
     pub const FOOTER: Color = Color(0x111316);
     pub const TEXT: Color = Color(0xe8eaed);
     pub const MUTED: Color = Color(0x9aa3ad);
+    pub const BODY: Color = Color(0xc9ced4);
     pub const FAINT: Color = Color(0x6b7480);
     pub const TRACK: Color = Color(0x2a3038);
     pub const GREEN: Color = Color(0x3fb68b);
@@ -48,6 +49,7 @@ pub mod palette {
     pub const RED_TINT_HOVER: Color = Color(0x3b1c1f);
     pub const RED_BORDER: Color = Color(0x6e2a2e);
     pub const AMBER: Color = Color(0xe0b252);
+    pub const AMBER_TINT: Color = Color(0x3a3020);
     pub const BUTTON: Color = Color(0x23282e);
     pub const BUTTON_HOVER: Color = Color(0x2c3239);
     pub const BUTTON_PRESSED: Color = Color(0x1e2227);
@@ -70,6 +72,27 @@ pub mod glyph {
     pub const PAGE: char = '\u{E7C3}';
     pub const CLOSE: char = '\u{E711}';
     pub const CHECK: char = '\u{E73E}';
+    pub const DOWNLOAD: char = '\u{E896}';
+    pub const WARNING: char = '\u{E7BA}';
+}
+
+/// Splits `**strong**` markup into plain text and the UTF-16 ranges to emphasize.
+pub fn strong_ranges(markup: &str) -> (String, Vec<DWRITE_TEXT_RANGE>) {
+    let mut plain = String::with_capacity(markup.len());
+    let mut ranges = Vec::new();
+    let mut position = 0;
+    for (index, part) in markup.split("**").enumerate() {
+        let length = part.encode_utf16().count() as u32;
+        if index % 2 == 1 && length > 0 {
+            ranges.push(DWRITE_TEXT_RANGE {
+                startPosition: position,
+                length,
+            });
+        }
+        plain.push_str(part);
+        position += length;
+    }
+    (plain, ranges)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -277,6 +300,29 @@ impl Graphics {
         }
     }
 
+    /// A wrapping layout of `**strong**` markup, emphasized ranges in semibold.
+    fn rich_layout(
+        &self,
+        markup: &str,
+        style: &Style,
+        width: f32,
+    ) -> Result<(IDWriteTextLayout, Vec<DWRITE_TEXT_RANGE>)> {
+        let (plain, ranges) = strong_ranges(markup);
+        let layout = self.layout(&plain, &style.wrapped(), width, 10_000.0)?;
+        for range in &ranges {
+            unsafe { layout.SetFontWeight(DWRITE_FONT_WEIGHT(SEMIBOLD), *range)? };
+        }
+        Ok((layout, ranges))
+    }
+
+    /// Height of `markup` wrapped to `width`.
+    pub fn rich_height(&self, markup: &str, style: &Style, width: f32) -> f32 {
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        self.rich_layout(markup, style, width)
+            .and_then(|(layout, _)| unsafe { layout.GetMetrics(&mut metrics) })
+            .map_or(0.0, |()| metrics.height)
+    }
+
     /// Width of a single line of text.
     pub fn measure(&self, text: &str, style: &Style) -> f32 {
         self.metrics(text, style).map_or(0.0, |line| line.width)
@@ -461,6 +507,31 @@ impl Canvas<'_> {
             x += line.width;
         }
         width
+    }
+
+    /// Wrapped `**strong**` markup from the top of `rect`; emphasis in `strong`.
+    pub fn rich(&self, markup: &str, style: Style, rect: Rect, color: Color, strong: Color) {
+        let (Some(brush), Some(emphasis), Ok((layout, ranges))) = (
+            self.brush(color),
+            self.brush(strong),
+            self.graphics.rich_layout(markup, &style, rect.w),
+        ) else {
+            return;
+        };
+        unsafe {
+            for range in ranges {
+                let _ = layout.SetDrawingEffect(&emphasis, range);
+            }
+            self.target.DrawTextLayout(
+                Vector2 {
+                    X: rect.x,
+                    Y: rect.y,
+                },
+                &layout,
+                &brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP,
+            );
+        }
     }
 
     /// An icon glyph centered on (x, y).

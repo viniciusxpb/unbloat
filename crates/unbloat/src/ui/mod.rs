@@ -2,10 +2,11 @@
 //! draws its live counters with Direct2D. Buttons stay real Win32 buttons
 //! (owner-drawn) so keyboard navigation and screen readers keep working.
 mod format;
-mod paint;
-mod view;
+pub(crate) mod paint;
+pub(crate) mod surface;
+pub(crate) mod view;
 
-use paint::{Canvas, Graphics, glyph, palette};
+use paint::{glyph, palette};
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -17,6 +18,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use surface::{Button, Surface, button_state, wide};
 use unbloat::{
     Result, archiver,
     config::Config,
@@ -25,25 +27,16 @@ use unbloat::{
     output, scanner,
     tracker::{Phase, Tracker},
 };
-use view::{ButtonKind, ButtonState};
+use view::ButtonKind;
 use windows::{
     Win32::{
         Foundation::*,
-        Graphics::{
-            Direct2D::{Common::*, *},
-            Dwm::*,
-            Dxgi::Common::*,
-            Gdi::*,
-        },
+        Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::GetModuleHandleW, SystemInformation::GetLocalTime},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    core::{BOOL, HSTRING, PCWSTR, w},
+    core::{HSTRING, PCWSTR, w},
 };
-
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(Some(0)).collect()
-}
 
 pub fn show_error(message: &str) {
     let message = wide(message);
@@ -89,13 +82,6 @@ enum Outcome {
     Cancelled,
 }
 
-struct Button {
-    hwnd: HWND,
-    id: i32,
-    label: &'static str,
-    glyph: Option<char>,
-}
-
 struct Sample {
     at: Instant,
     fraction: f64,
@@ -116,11 +102,7 @@ struct Window {
     name: String,
     folder: String,
     language: Language,
-    graphics: Graphics,
-    target: Option<ID2D1HwndRenderTarget>,
-    buttons_target: Option<ID2D1DCRenderTarget>,
-    hwnd: HWND,
-    dpi: u32,
+    surface: Surface,
     buttons: Vec<Button>,
     taskbar: Option<ITaskbarList3>,
     title: String,
@@ -135,10 +117,6 @@ impl Window {
         }
     }
 
-    fn px(&self, dips: f32) -> i32 {
-        (dips * self.dpi as f32 / 96.0).round() as i32
-    }
-
     /// Places the buttons of the current screen and sizes the window to it.
     fn layout(&mut self) {
         let visible: &[i32] = match self.outcome {
@@ -149,54 +127,20 @@ impl Window {
         let widths: Vec<f32> = visible
             .iter()
             .filter_map(|id| self.buttons.iter().find(|b| b.id == *id))
-            .map(|b| view::button_width(&self.graphics, b.label, b.glyph))
+            .map(|b| view::button_width(&self.surface.graphics, b.label, b.glyph))
             .collect();
         let rects = view::button_row(self.height(), &widths);
-        unsafe {
-            for button in &self.buttons {
-                match visible.iter().position(|id| *id == button.id) {
-                    Some(index) => {
-                        let r = rects[index];
-                        let _ = SetWindowPos(
-                            button.hwnd,
-                            None,
-                            self.px(r.x),
-                            self.px(r.y),
-                            self.px(r.right()) - self.px(r.x),
-                            self.px(r.bottom()) - self.px(r.y),
-                            SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
-                        let _ = ShowWindow(button.hwnd, SW_SHOW);
-                    }
-                    None => {
-                        let _ = ShowWindow(button.hwnd, SW_HIDE);
-                    }
-                }
-            }
-            let mut frame = RECT {
-                left: 0,
-                top: 0,
-                right: self.px(view::WIDTH),
-                bottom: self.px(self.height()),
-            };
-            let _ = AdjustWindowRectExForDpi(&mut frame, style(), false, WS_EX_APPWINDOW, self.dpi);
-            let _ = SetWindowPos(
-                self.hwnd,
-                None,
-                0,
-                0,
-                frame.right - frame.left,
-                frame.bottom - frame.top,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-            let _ = InvalidateRect(Some(self.hwnd), None, false);
+        for button in &self.buttons {
+            let index = visible.iter().position(|id| *id == button.id);
+            self.surface.place(button.hwnd, index.map(|i| rects[i]));
         }
+        self.surface.resize(view::WIDTH, self.height());
     }
 
     fn set_title(&mut self, title: String) {
         if title != self.title {
             unsafe {
-                let _ = SetWindowTextW(self.hwnd, PCWSTR(wide(&title).as_ptr()));
+                let _ = SetWindowTextW(self.surface.hwnd, PCWSTR(wide(&title).as_ptr()));
             }
             self.title = title;
         }
@@ -205,9 +149,13 @@ impl Window {
     fn taskbar(&self, state: TBPFLAG, fraction: Option<f64>) {
         if let Some(taskbar) = &self.taskbar {
             unsafe {
-                let _ = taskbar.SetProgressState(self.hwnd, state);
+                let _ = taskbar.SetProgressState(self.surface.hwnd, state);
                 if let Some(fraction) = fraction {
-                    let _ = taskbar.SetProgressValue(self.hwnd, (fraction * 1000.0) as u64, 1000);
+                    let _ = taskbar.SetProgressValue(
+                        self.surface.hwnd,
+                        (fraction * 1000.0) as u64,
+                        1000,
+                    );
                 }
             }
         }
@@ -262,7 +210,7 @@ impl Window {
             (snapshot.phase != Phase::Scanning).then(|| snapshot.fraction()),
         );
         unsafe {
-            let _ = InvalidateRect(Some(self.hwnd), None, false);
+            let _ = InvalidateRect(Some(self.surface.hwnd), None, false);
         }
     }
 
@@ -315,7 +263,7 @@ impl Window {
         unsafe {
             match &self.outcome {
                 Outcome::Cancelled => {
-                    let _ = DestroyWindow(self.hwnd);
+                    let _ = DestroyWindow(self.surface.hwnd);
                     return;
                 }
                 Outcome::Done(_) => {
@@ -328,7 +276,7 @@ impl Window {
                 }
                 Outcome::Working => {}
             }
-            let _ = KillTimer(Some(self.hwnd), TIMER);
+            let _ = KillTimer(Some(self.surface.hwnd), TIMER);
             self.layout();
             if let Some(close) = self.buttons.iter().find(|b| b.id == CLOSE) {
                 let _ = SetFocus(Some(close.hwnd));
@@ -336,7 +284,7 @@ impl Window {
             // Draw attention when the user switched to another window meanwhile.
             let flash = FLASHWINFO {
                 cbSize: size_of::<FLASHWINFO>() as u32,
-                hwnd: self.hwnd,
+                hwnd: self.surface.hwnd,
                 dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
                 uCount: 0,
                 dwTimeout: 0,
@@ -461,7 +409,8 @@ impl Window {
     fn done_view(&self, summary: &Summary) -> view::Done {
         let language = self.language;
         let saved = if summary.archive < summary.original {
-            let smaller = 100 - summary.archive * 100 / summary.original;
+            // Rounded down: "100% smaller" would claim an empty archive.
+            let smaller = (summary.original - summary.archive) * 100 / summary.original;
             format::emphasis(
                 i18n::text("progress.saved"),
                 &format::bytes(summary.original - summary.archive, language),
@@ -517,54 +466,22 @@ impl Window {
     }
 
     fn paint(&mut self) {
-        unsafe {
-            if self.target.is_none() {
-                let mut client = RECT::default();
-                let _ = GetClientRect(self.hwnd, &mut client);
-                let properties = D2D1_RENDER_TARGET_PROPERTIES {
-                    dpiX: self.dpi as f32,
-                    dpiY: self.dpi as f32,
-                    ..Default::default()
-                };
-                let window = D2D1_HWND_RENDER_TARGET_PROPERTIES {
-                    hwnd: self.hwnd,
-                    pixelSize: D2D_SIZE_U {
-                        width: client.right as u32,
-                        height: client.bottom as u32,
-                    },
-                    presentOptions: D2D1_PRESENT_OPTIONS_NONE,
-                };
-                self.target = self
-                    .graphics
-                    .d2d
-                    .CreateHwndRenderTarget(&properties, &window)
-                    .ok();
+        // Each view is built first; drawing then only borrows the surface.
+        match &self.outcome {
+            Outcome::Working | Outcome::Cancelled => {
+                let screen = self.working_view();
+                self.surface.paint(|canvas| view::working(canvas, &screen));
             }
-            let Some(target) = self.target.clone() else {
-                return;
-            };
-            target.BeginDraw();
-            target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-            let canvas = Canvas {
-                target: &target,
-                graphics: &self.graphics,
-            };
-            match &self.outcome {
-                Outcome::Working | Outcome::Cancelled => {
-                    view::working(&canvas, &self.working_view())
-                }
-                Outcome::Done(summary) => view::done(&canvas, &self.done_view(summary)),
-                Outcome::Failed(message) => view::failed(
-                    &canvas,
-                    &view::Failed {
-                        title: i18n::text("progress.failed_title"),
-                        message: message.clone(),
-                    },
-                ),
+            Outcome::Done(summary) => {
+                let screen = self.done_view(summary);
+                self.surface.paint(|canvas| view::done(canvas, &screen));
             }
-            if target.EndDraw(None, None).is_err() {
-                // Device lost (D2DERR_RECREATE_TARGET): rebuild on the next paint.
-                self.target = None;
+            Outcome::Failed(message) => {
+                let screen = view::Failed {
+                    title: i18n::text("progress.failed_title"),
+                    message: message.clone(),
+                };
+                self.surface.paint(|canvas| view::failed(canvas, &screen));
             }
         }
     }
@@ -578,48 +495,10 @@ impl Window {
             (CLOSE, Outcome::Done(_)) => ButtonKind::Primary,
             _ => ButtonKind::Neutral,
         };
-        let flags = item.itemState.0;
-        let state = ButtonState {
-            hot: unsafe { GetWindowLongPtrW(item.hwndItem, GWLP_USERDATA) } != 0,
-            pressed: flags & ODS_SELECTED.0 != 0,
-            focused: flags & ODS_FOCUS.0 != 0 && flags & ODS_NOFOCUSRECT.0 == 0,
-            disabled: flags & ODS_DISABLED.0 != 0,
-        };
-        let (label, glyph) = (button.label, button.glyph);
-        unsafe {
-            if self.buttons_target.is_none() {
-                let properties = D2D1_RENDER_TARGET_PROPERTIES {
-                    pixelFormat: D2D1_PIXEL_FORMAT {
-                        format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                        alphaMode: D2D1_ALPHA_MODE_IGNORE,
-                    },
-                    ..Default::default()
-                };
-                self.buttons_target = self.graphics.d2d.CreateDCRenderTarget(&properties).ok();
-            }
-            let Some(target) = self.buttons_target.clone() else {
-                return;
-            };
-            target.SetDpi(self.dpi as f32, self.dpi as f32);
-            if target.BindDC(item.hDC, &item.rcItem).is_err() {
-                return;
-            }
-            target.BeginDraw();
-            target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-            let scale = 96.0 / self.dpi as f32;
-            let size = (
-                (item.rcItem.right - item.rcItem.left) as f32 * scale,
-                (item.rcItem.bottom - item.rcItem.top) as f32 * scale,
-            );
-            let canvas = Canvas {
-                target: &target,
-                graphics: &self.graphics,
-            };
-            view::button(&canvas, size, label, glyph, kind, state);
-            if target.EndDraw(None, None).is_err() {
-                self.buttons_target = None;
-            }
-        }
+        let (label, glyph, state) = (button.label, button.glyph, button_state(item));
+        self.surface.paint_control(item, |canvas, size| {
+            view::button(canvas, size, label, glyph, kind, state)
+        });
     }
 
     fn open_folder(&self) {
@@ -634,29 +513,6 @@ impl Window {
             }
         }
     }
-
-    fn dpi_changed(&mut self, dpi: u32, suggested: &RECT) {
-        self.dpi = dpi;
-        unsafe {
-            let _ = SetWindowPos(
-                self.hwnd,
-                None,
-                suggested.left,
-                suggested.top,
-                suggested.right - suggested.left,
-                suggested.bottom - suggested.top,
-                SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-            if let Some(target) = &self.target {
-                target.SetDpi(dpi as f32, dpi as f32);
-            }
-        }
-        self.layout();
-    }
-}
-
-fn style() -> WINDOW_STYLE {
-    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN
 }
 
 unsafe extern "system" fn procedure(
@@ -672,24 +528,11 @@ unsafe extern "system" fn procedure(
     let window = unsafe { &mut *pointer };
     match message {
         WM_PAINT => {
-            let mut paint = PAINTSTRUCT::default();
-            unsafe { BeginPaint(hwnd, &mut paint) };
             window.paint();
-            unsafe {
-                let _ = EndPaint(hwnd, &paint);
-            }
             LRESULT(0)
         }
         WM_SIZE => {
-            if let Some(target) = &window.target {
-                let size = D2D_SIZE_U {
-                    width: (lparam.0 & 0xffff) as u32,
-                    height: (lparam.0 >> 16 & 0xffff) as u32,
-                };
-                unsafe {
-                    let _ = target.Resize(&size);
-                }
-            }
+            window.surface.resized(lparam);
             LRESULT(0)
         }
         WM_DRAWITEM => {
@@ -722,8 +565,8 @@ unsafe extern "system" fn procedure(
             LRESULT(0)
         }
         WM_DPICHANGED => {
-            let suggested = unsafe { *(lparam.0 as *const RECT) };
-            window.dpi_changed((wparam.0 & 0xffff) as u32, &suggested);
+            window.surface.dpi_changed(wparam, lparam);
+            window.layout();
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -731,39 +574,6 @@ unsafe extern "system" fn procedure(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
-    }
-}
-
-/// Tracks hover for the owner-drawn buttons (stored in their GWLP_USERDATA).
-unsafe extern "system" fn button_procedure(
-    hwnd: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-    _: usize,
-    _: usize,
-) -> LRESULT {
-    unsafe {
-        match message {
-            WM_MOUSEMOVE if GetWindowLongPtrW(hwnd, GWLP_USERDATA) == 0 => {
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 1);
-                let mut track = TRACKMOUSEEVENT {
-                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                let _ = TrackMouseEvent(&mut track);
-                let _ = InvalidateRect(Some(hwnd), None, false);
-            }
-            WM_MOUSELEAVE => {
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                let _ = InvalidateRect(Some(hwnd), None, false);
-            }
-            WM_ERASEBKGND => return LRESULT(1),
-            _ => {}
-        }
-        DefSubclassProc(hwnd, message, wparam, lparam)
     }
 }
 
@@ -819,11 +629,7 @@ fn run_window(paths: Vec<PathBuf>, config: Config) -> Result<()> {
         name,
         folder,
         language,
-        graphics: Graphics::new()?,
-        target: None,
-        buttons_target: None,
-        hwnd: HWND::default(),
-        dpi: 96,
+        surface: Surface::new()?,
         buttons: Vec::new(),
         taskbar: None,
         title: String::new(),
@@ -863,7 +669,7 @@ fn run_window(paths: Vec<PathBuf>, config: Config) -> Result<()> {
             if result <= 0 {
                 break;
             }
-            if !IsDialogMessageW(window.hwnd, &message).as_bool() {
+            if !IsDialogMessageW(window.surface.hwnd, &message).as_bool() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -881,7 +687,7 @@ fn run_window(paths: Vec<PathBuf>, config: Config) -> Result<()> {
     }
 }
 
-#[allow(clippy::manual_dangling_ptr)]
+#[allow(clippy::manual_dangling_ptr)] // MAKEINTRESOURCE: icon resource ID 1.
 unsafe fn create(window: &mut Window) -> Result<()> {
     unsafe {
         let instance = GetModuleHandleW(None)?;
@@ -902,7 +708,7 @@ unsafe fn create(window: &mut Window) -> Result<()> {
             WS_EX_APPWINDOW,
             class.lpszClassName,
             PCWSTR(wide(i18n::text("progress.window_scanning")).as_ptr()),
-            style(),
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             640,
@@ -912,26 +718,7 @@ unsafe fn create(window: &mut Window) -> Result<()> {
             Some(instance.into()),
             None,
         )?;
-        window.hwnd = hwnd;
-        window.dpi = GetDpiForWindow(hwnd).max(96);
-        // Dark caption to match the content; colors are Windows 11 only.
-        let dark = BOOL(1);
-        let attribute = |name: DWMWINDOWATTRIBUTE, value: *const std::ffi::c_void, size: usize| {
-            let _ = DwmSetWindowAttribute(hwnd, name, value, size as u32);
-        };
-        attribute(
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &dark as *const _ as _,
-            size_of::<BOOL>(),
-        );
-        let caption = palette::WINDOW.colorref();
-        let text = palette::TEXT.colorref();
-        attribute(
-            DWMWA_CAPTION_COLOR,
-            &caption as *const _ as _,
-            size_of::<u32>(),
-        );
-        attribute(DWMWA_TEXT_COLOR, &text as *const _ as _, size_of::<u32>());
+        window.surface.attach(hwnd);
         for (id, key, glyph) in [
             (CANCEL, "common.cancel", Some(glyph::CLOSE)),
             (
@@ -941,57 +728,12 @@ unsafe fn create(window: &mut Window) -> Result<()> {
             ),
             (CLOSE, "common.close", None),
         ] {
-            let label = i18n::text(key);
-            let button = CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
-                w!("BUTTON"),
-                PCWSTR(wide(label).as_ptr()),
-                WS_CHILD | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
-                0,
-                0,
-                0,
-                0,
-                Some(hwnd),
-                Some(HMENU(id as usize as *mut _)),
-                Some(instance.into()),
-                None,
-            )?;
-            let _ = SetWindowSubclass(button, Some(button_procedure), 1, 0);
-            window.buttons.push(Button {
-                hwnd: button,
-                id,
-                label,
-                glyph,
-            });
+            window
+                .buttons
+                .push(window.surface.button(id, i18n::text(key), glyph)?);
         }
         window.layout();
-        // Like dialogs: no focus ring until the keyboard is used (UIS_SET, UISF_HIDEFOCUS).
-        SendMessageW(hwnd, WM_CHANGEUISTATE, Some(WPARAM(1 << 16 | 1)), None);
-        // Center on the monitor the window opened on.
-        let mut frame = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut frame);
-        let mut monitor = MONITORINFO {
-            cbSize: size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if GetMonitorInfoW(
-            MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-            &mut monitor,
-        )
-        .as_bool()
-        {
-            let work = monitor.rcWork;
-            let (width, height) = (frame.right - frame.left, frame.bottom - frame.top);
-            let _ = SetWindowPos(
-                hwnd,
-                None,
-                work.left + (work.right - work.left - width) / 2,
-                work.top + (work.bottom - work.top - height) / 2,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
+        window.surface.center();
         window.taskbar =
             CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
                 .ok()

@@ -1,10 +1,5 @@
 .DEFAULT_GOAL := help
 
-# install/uninstall run the Windows installer scripts.
-# A 32-bit make redirects System32 to SysWOW64; Sysnative reaches 64-bit PowerShell.
-WINDOWS_ROOT := $(subst \,/,$(or $(SystemRoot),$(SYSTEMROOT),$(windir),$(WINDIR)))
-POWERSHELL := $(WINDOWS_ROOT)/$(if $(PROCESSOR_ARCHITEW6432),Sysnative,System32)/WindowsPowerShell/v1.0/powershell.exe
-
 .PHONY: help build test run install uninstall package benchmark review
 
 help:
@@ -22,11 +17,11 @@ test:
 run:
 	cargo run -p unbloat --locked -- --dev-run
 
-install: build
-	"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
+install:
+	cargo xtask install
 
 uninstall:
-	"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall.ps1
+	cargo xtask uninstall
 
 package: build
 	cargo xtask package

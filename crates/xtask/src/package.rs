@@ -4,12 +4,18 @@ use std::{
     fs::{self, File},
     io,
     path::{Path, PathBuf},
+    process::Command,
     time::SystemTime,
 };
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use zip::{CompressionMethod, DateTime, ZipWriter, write::SimpleFileOptions};
 
-pub fn create() -> Result {
+pub fn create(args: &[String]) -> Result {
+    let open = match args {
+        [] => std::env::var_os("CI").is_none(),
+        [flag] if flag == "--no-open" => false,
+        _ => return Err(format!("unsupported package option '{}'", args[0]).into()),
+    };
     let root = root();
     let mut build = cargo();
     build.args(["build", "--release", "--locked", "--package", "unbloat"]);
@@ -25,9 +31,6 @@ pub fn create() -> Result {
         vec![
             (release.join("unbloat.exe"), "unbloat.exe"),
             (release.join("unbloat_shell.dll"), "unbloat-shell.dll"),
-            (root.join("scripts/install.ps1"), "install.ps1"),
-            (root.join("scripts/uninstall.ps1"), "uninstall.ps1"),
-            (root.join("scripts/i18n.ps1"), "i18n.ps1"),
         ]
     } else {
         // No file-manager integration outside Windows yet: the command line only.
@@ -46,9 +49,7 @@ pub fn create() -> Result {
         fs::copy(&source, destination.join(name))
             .map_err(|e| format!("{}: {e}", source.display()))?;
     }
-    for directory in ["licenses", "locales"] {
-        copy_tree(&root.join(directory), &destination.join(directory))?;
-    }
+    copy_tree(&root.join("licenses"), &destination.join("licenses"))?;
     let archive = root
         .join("dist")
         .join(format!("Unbloat-{version}-{}.zip", platform()));
@@ -61,7 +62,35 @@ pub fn create() -> Result {
         "{}",
         i18n::message("package.archive", &[&archive.display()])
     );
+    if open && let Err(e) = reveal(&archive) {
+        // The package is complete; failing to show it is only worth a note.
+        eprintln!("{}", i18n::message("package.open_failed", &[&e]));
+    }
     Ok(())
+}
+
+/// Shows the file in the system file manager, selected where supported.
+/// Does not wait: the file manager outlives this task.
+fn reveal(file: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer parses `/select,"path"` itself; Rust's own quoting would
+        // wrap the whole argument and Explorer would open Documents instead.
+        Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", file.display()))
+            .spawn()
+            .map(drop)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg("-R").arg(file).spawn().map(drop)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let folder = file.parent().unwrap_or(file);
+        Command::new("xdg-open").arg(folder).spawn().map(drop)
+    }
 }
 
 /// For example `windows-x64`, the name earlier releases used.

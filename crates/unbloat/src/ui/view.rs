@@ -101,14 +101,11 @@ pub fn button_row(height: f32, widths: &[f32]) -> Vec<Rect> {
     rects
 }
 
-fn footer(canvas: &Canvas, height: f32) {
-    let top = height - FOOTER_HEIGHT;
-    canvas.fill(
-        Rect::new(0.0, top, WIDTH, FOOTER_HEIGHT),
-        0.0,
-        palette::FOOTER,
-    );
-    canvas.line((0.0, top + 0.5), (WIDTH, top + 0.5), BORDER);
+/// The darker band with a top rule that holds the buttons.
+fn footer(canvas: &Canvas, width: f32, height: f32, band: f32) {
+    let top = height - band;
+    canvas.fill(Rect::new(0.0, top, width, band), 0.0, palette::FOOTER);
+    canvas.line((0.0, top + 0.5), (width, top + 0.5), BORDER);
 }
 
 fn bar(canvas: &Canvas, rect: Rect, fraction: Option<f32>, pulse: f32) {
@@ -257,7 +254,7 @@ pub fn working(canvas: &Canvas, view: &Working) {
         MUTED,
         Align::Start,
     );
-    footer(canvas, WORKING_HEIGHT);
+    footer(canvas, WIDTH, WORKING_HEIGHT, FOOTER_HEIGHT);
 }
 
 pub fn done(canvas: &Canvas, view: &Done) {
@@ -312,7 +309,7 @@ pub fn done(canvas: &Canvas, view: &Done) {
         GREEN,
     );
     cards(canvas, 176.0, 3, &view.cards);
-    footer(canvas, DONE_HEIGHT);
+    footer(canvas, WIDTH, DONE_HEIGHT, FOOTER_HEIGHT);
 }
 
 pub fn failed(canvas: &Canvas, view: &Failed) {
@@ -339,7 +336,7 @@ pub fn failed(canvas: &Canvas, view: &Failed) {
         MUTED,
         Align::Start,
     );
-    footer(canvas, FAILED_HEIGHT);
+    footer(canvas, WIDTH, FAILED_HEIGHT, FOOTER_HEIGHT);
 }
 
 pub fn button_width(graphics: &Graphics, label: &str, glyph: Option<char>) -> f32 {
@@ -419,4 +416,109 @@ fn fit_path(graphics: &Graphics, (folder, suffix): &(String, String), width: f32
         }
     }
     full // Still too long: the layout trims the end with an ellipsis.
+}
+
+/// The install/uninstall window: an icon, a title, a body with `**strong**`
+/// words and a footer with buttons on the left.
+pub mod notice {
+    use super::super::paint::{palette::*, *};
+    use super::bar;
+
+    pub const WIDTH: f32 = 600.0;
+    const MARGIN: f32 = 24.0;
+    const BODY_TOP: f32 = 74.0;
+    pub const FOOTER: f32 = 68.0;
+    const BUTTON_HEIGHT: f32 = 34.0;
+    const TITLE: Style = Style::new(Family::Display, 18.0, BOLD);
+    const BODY: Style = Style::new(Family::Text, 13.5, REGULAR);
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Tone {
+        Info,
+        Success,
+        Working,
+        Neutral,
+        Warning,
+        Danger,
+    }
+
+    pub struct Notice {
+        pub tone: Tone,
+        pub title: String,
+        /// `**strong**` marks words in bold.
+        pub body: String,
+        /// 0..1, the sweep of the bar shown while working.
+        pub pulse: f32,
+    }
+
+    fn body_height(graphics: &Graphics, notice: &Notice) -> f32 {
+        graphics.rich_height(&notice.body, &BODY, WIDTH - 2.0 * MARGIN)
+    }
+
+    /// Client height for this notice, footer included.
+    pub fn height(graphics: &Graphics, notice: &Notice) -> f32 {
+        let progress = if notice.tone == Tone::Working {
+            22.0
+        } else {
+            0.0
+        };
+        (BODY_TOP + body_height(graphics, notice) + progress + 30.0 + FOOTER)
+            .max(250.0)
+            .ceil()
+    }
+
+    /// Background and footer band of the window.
+    pub fn frame(canvas: &Canvas, height: f32) {
+        canvas.clear(WINDOW);
+        super::footer(canvas, WIDTH, height, FOOTER);
+    }
+
+    /// The content above the footer, drawn into a control of `size`.
+    pub fn content(canvas: &Canvas, size: (f32, f32), notice: &Notice) {
+        canvas.clear(WINDOW);
+        let (tint, color, symbol) = match notice.tone {
+            Tone::Info => (GREEN_TINT, GREEN, glyph::DOWNLOAD),
+            Tone::Success => (GREEN_TINT, GREEN, glyph::CHECK),
+            Tone::Working => (GREEN_TINT, GREEN, glyph::STOPWATCH),
+            Tone::Neutral => (BUTTON, MUTED, glyph::CHECK),
+            Tone::Warning => (AMBER_TINT, AMBER, glyph::WARNING),
+            Tone::Danger => (RED_TINT, RED, glyph::CLOSE),
+        };
+        let center = (MARGIN + 15.0, 39.0);
+        canvas.circle(center.0, center.1, 15.0, tint);
+        canvas.icon(symbol, 13.0, center, color);
+        let width = size.0 - 2.0 * MARGIN;
+        canvas.text(
+            &notice.title,
+            TITLE,
+            Rect::new(MARGIN + 42.0, 23.0, width - 42.0, 32.0),
+            TEXT,
+            Align::Start,
+        );
+        let body = Rect::new(MARGIN, BODY_TOP, width, size.1 - BODY_TOP);
+        canvas.rich(&notice.body, BODY, body, palette::BODY, TEXT);
+        if notice.tone == Tone::Working {
+            let top = BODY_TOP + body_height(canvas.graphics, notice) + 14.0;
+            bar(
+                canvas,
+                Rect::new(MARGIN, top, width, 4.0),
+                None,
+                notice.pulse,
+            );
+        }
+    }
+
+    /// Footer buttons laid out from the left.
+    pub fn buttons(height: f32, widths: &[f32]) -> Vec<Rect> {
+        let y = height - FOOTER + (FOOTER - BUTTON_HEIGHT) / 2.0;
+        let mut x = MARGIN;
+        widths
+            .iter()
+            .map(|width| {
+                let rect = Rect::new(x, y, *width, BUTTON_HEIGHT);
+                x += width + 10.0;
+                rect
+            })
+            .collect()
+    }
 }

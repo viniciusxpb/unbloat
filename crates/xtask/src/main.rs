@@ -29,8 +29,7 @@ const MAKE_TARGETS: [&str; 9] = [
     "benchmark",
     "review",
 ];
-const USAGE: &str =
-    "commands: help, licenses, package, review, localization [--windows] [--executable <path>]";
+const USAGE: &str = "commands: help, licenses, package [--no-open], install, uninstall, review, localization [--windows] [--executable <path>]";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,7 +39,9 @@ fn main() {
             Ok(())
         }
         Some("licenses") => licenses::collect(),
-        Some("package") => package::create(),
+        Some("package") => package::create(&args[1..]),
+        Some("install") => install(),
+        Some("uninstall") => uninstall(),
         Some("review") => review::copy(),
         Some("localization") => localization::check(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'; {USAGE}").into()),
@@ -120,4 +121,22 @@ fn version() -> Result<String> {
         [package] => Ok(field(package, "version")?.to_owned()),
         _ => Err(i18n::text("package.missing_package").into()),
     }
+}
+
+/// Installs from the freshly built package, exactly as a user's double click would.
+fn install() -> Result {
+    package::create(&["--no-open".to_owned()])?;
+    let exe = root().join("dist").join("Unbloat").join(executable());
+    run(Command::new(exe).arg("--install"))
+}
+
+/// Any build of unbloat can remove the user's installation.
+fn uninstall() -> Result {
+    run(cargo().args(["build", "--release", "--locked", "--package", "unbloat"]))?;
+    let exe = root().join("target").join("release").join(executable());
+    run(Command::new(exe).arg("--uninstall"))
+}
+
+fn executable() -> String {
+    format!("unbloat{}", std::env::consts::EXE_SUFFIX)
 }

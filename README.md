@@ -11,12 +11,11 @@ Git, Rust ou 7-Zip instalados no computador de destino. Não usa rede ou telemet
 Extraia o ZIP de distribuição `Unbloat-<versão>-windows-x64.zip`, abra **unbloat.exe** e clique em
 **Instalar integração**. A janela permanece aberta durante a instalação e mostra
 o resultado. Abrir o executável sem argumentos mostra essa janela de instalação
-e instruções de uso, sem um console que desaparece imediatamente.
-
-Como alternativa, abra PowerShell **64 bits** na pasta extraída e execute:
+e instruções de uso, sem um console que desaparece imediatamente. Não é preciso
+PowerShell nem permissão de administrador. Pela linha de comando:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+.\unbloat.exe --install                       # ou --install-dir <pasta>
 ```
 
 A instalação por usuário fica em `%LOCALAPPDATA%\Programs\Unbloat`, sem admin.
@@ -40,22 +39,25 @@ Arquivos selecionados explicitamente entram no arquivo como escolhidos, sem
 carregar regras do diretório pai. Nas pastas selecionadas, as regras de ignore
 continuam sendo aplicadas recursivamente.
 
-Para desinstalar:
+Para desinstalar, abra **unbloat.exe** (o instalado ou o do pacote) e clique em
+**Desinstalar**, ou:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\Unbloat\uninstall.ps1"
+& "$env:LOCALAPPDATA\Programs\Unbloat\unbloat.exe" --uninstall
 ```
 
-Se Explorer ou Unbloat mantiverem um binário em uso, o script informa os arquivos
-bloqueados. Feche o aplicativo e saia/entre na sessão do Windows antes de tentar
-novamente. Os scripts não encerram o Explorer nem exigem elevação. Reinstalações
-preservam `config.toml`. A desinstalação preserva arquivos extras que você colocou
-na pasta de instalação. Não modifica registros do 7-Zip.
+O menu some na hora e não é preciso sair da sessão: arquivos que o Explorer ou o
+próprio Unbloat mantêm em uso (a DLL carregada, o executável aberto) são movidos
+para `%TEMP%`, de onde a próxima instalação ou desinstalação os apaga. Só se nem
+isso for possível o Unbloat lista os arquivos e pede para tentar de novo.
+Nada encerra o Explorer nem exige elevação. Reinstalações preservam `config.toml`
+e removem arquivos de versões anteriores. A desinstalação preserva arquivos extras
+que você colocou na pasta de instalação. Não modifica registros do 7-Zip.
 
-O instalador grava a DLL COM com um nome baseado no seu hash. As migrações dos
-handlers anteriores usam uma nova identidade COM para que o Explorer não
-reutilize a versão antiga carregada. DLLs antigas ainda em
-uso permanecem na lista de componentes para remoção na desinstalação.
+O instalador grava a DLL COM com um nome baseado no seu hash, para que uma versão
+nova se instale ao lado da que o Explorer ainda tem carregada. Instalações feitas
+pelos antigos scripts PowerShell são reconhecidas, atualizadas e desinstaladas
+normalmente.
 
 ## Desenvolver
 
@@ -70,8 +72,8 @@ make
 ```
 
 O aplicativo e a DLL incorporam os catálogos no build; alterações nos textos
-exigem recompilar; o `cargo xtask` também. Os scripts do instalador leem os
-mesmos arquivos diretamente, inclusive na distribuição e na instalação. Não é preciso instalar pacotes de idioma.
+exigem recompilar; o `cargo xtask` também. Os catálogos não são distribuídos:
+tudo já está dentro do executável. Não é preciso instalar pacotes de idioma.
 O menu segue o idioma detectado no processo do Explorer; uma variável definida
 só no terminal se aplica aos programas iniciados por esse terminal.
 
@@ -83,9 +85,9 @@ abaixo funcionam diretamente. O runtime C é ligado estaticamente.
 make build      # cargo build --workspace --release --locked
 make test       # testes, rustfmt e clippy com warnings como erros
 make run        # executa development.test_input do config.toml
-make install    # build + instalação por usuário
-make uninstall
-make package    # gera dist/Unbloat e ZIP de distribuição
+make install    # gera o pacote e instala a partir dele, como um usuário faria
+make uninstall  # remove a instalação do usuário atual
+make package    # gera dist/Unbloat e o ZIP, e abre a pasta com o ZIP selecionado
 make benchmark # benchmark real, relatório em target/benchmark/RESULTS.md
 make review     # instruções de code review + git diff --staged na área de transferência
 ```
@@ -101,15 +103,15 @@ cargo test --workspace --all-targets --locked
 cargo run -p unbloat -- --dev-run
 cargo xtask help          # a mesma ajuda do make
 cargo xtask licenses      # inventário e textos de licença em licenses/
-cargo xtask package       # build release, dist/Unbloat e o ZIP
+cargo xtask package       # build release, dist/Unbloat e o ZIP; --no-open não abre a pasta (nem em CI)
 cargo xtask localization  # idioma/UTF-8 do make, CLI e instalador; --windows inclui a janela nativa
 ```
 
 As tarefas de desenvolvimento ficam no crate `crates/xtask`, em Rust, com o alias
 definido em `.cargo/config.toml`; o Makefile as chama. Elas não usam PowerShell e
-não entram na distribuição. O PowerShell continua apenas no que é específico do
-Windows: `install.ps1`, `uninstall.ps1` (e `i18n.ps1`, que eles usam) e os testes
-de Explorer/registro `scripts/test-shell.ps1` e `scripts/test-launcher.ps1`.
+não entram na distribuição. Instalar e desinstalar fazem parte do próprio
+`unbloat.exe`. O PowerShell ficou só nos testes de integração com o Explorer e o
+registro, `scripts/test-shell.ps1` e `scripts/test-launcher.ps1`, que já exigem Windows.
 Fora do Windows, `cargo xtask package` gera um pacote só com a CLI.
 
 Para publicar uma nova versão, altere somente `version` em `[workspace.package]`

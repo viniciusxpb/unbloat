@@ -12,7 +12,8 @@ Unbloat é um utilitário em Rust para Windows 10/11 x64 que compacta em `.7z`
 - `crates/unbloat`: motor (scanner → manifesto → compressor), executável e janelas Win32.
 - `crates/unbloat-shell`: DLL COM do menu de contexto, carregada **dentro do Explorer**.
 - `crates/xtask`: tarefas de desenvolvimento portáveis (`cargo xtask`), chamadas pelo Makefile.
-- `scripts/*.ps1`: instalador/desinstalador por usuário (HKCU, sem admin) e testes de Explorer/registro.
+- `crates/unbloat/src/setup`: instalador/desinstalador por usuário (HKCU, sem admin), no próprio exe.
+- `scripts/*.ps1`: só testes de integração com Explorer/registro.
 - `locales/pt-BR.txt` e `locales/en.txt`: todos os textos, embutidos no build.
 
 ## Como revisar
@@ -59,13 +60,22 @@ Unbloat é um utilitário em Rust para Windows 10/11 x64 que compacta em `.7z`
   padrão (`#[serde(default)]`), e campo removido precisa continuar sendo aceito.
   Campos desconhecidos são rejeitados de propósito.
 
-**Instalador** (`scripts/*.ps1`)
+**Instalador** (`crates/unbloat/src/setup`)
+- Nunca apagar fora da pasta de instalação: só caminhos do marcador
+  `.unbloat-install.json`, relativos, sem `..` e sem links no caminho. Recusar
+  raiz de unidade e junctions. Nunca pedir elevação, encerrar o Explorer ou tocar
+  nos registros do 7-Zip.
+- Compatível com instalações antigas: mesmo marcador (lido também com BOM), mesmo
+  nome de DLL por hash SHA-256 e os mesmos CLSIDs. O registro só aponta para uma
+  instalação completa: arquivos primeiro, registro depois, e reversão se a
+  ativação COM falhar.
+- Arquivo em uso é movido para `%TEMP%`, nunca deixado pela metade na pasta.
+
+**Testes em PowerShell** (`scripts/*.ps1`)
 - Windows PowerShell 5.1: sem `&&`, `??` ou ternário. Um `.ps1` com caractere não
   ASCII precisa estar em UTF-8 com BOM. Não use variáveis automáticas como nome
-  (`$input`, `$args`, `$error`…).
-- Nunca apagar fora da pasta de instalação. Recusar raiz de unidade e junctions.
-  Tirar a barra final dos caminhos antes de comparar ou concatenar. Nunca pedir
-  elevação, encerrar o Explorer ou tocar nos registros do 7-Zip.
+  (`$input`, `$args`, `$error`…). Executável GUI chamado com `&` precisa de
+  `| Out-Host` para o PowerShell esperar e preencher `$LASTEXITCODE`.
 
 **Localização**
 - Chave nova vai para os dois catálogos, com os mesmos `{0}`, `{1}`. Os catálogos

@@ -1,5 +1,5 @@
 //! UTF-8 output, language selection and fallback of make help, the CLI and,
-//! on Windows, the PowerShell installer diagnostics and the native launcher.
+//! on Windows, the installer diagnostics and the native launcher.
 use crate::{MAKE_TARGETS, Result, i18n, root};
 use std::{
     io::Read,
@@ -72,7 +72,7 @@ pub fn check(args: &[String]) -> Result {
         )?;
         #[cfg(windows)]
         {
-            installer_diagnostics(tag, &text)?;
+            installer_diagnostics(&executable, tag, &text)?;
             if windows {
                 crate::window::check_launcher(&executable, tag, &text)?;
             }
@@ -84,8 +84,6 @@ pub fn check(args: &[String]) -> Result {
         };
         println!("PASS: language={tag:?}, {checked} language and UTF-8 checks");
     }
-    #[cfg(windows)]
-    installer_placeholders()?;
     let _ = windows;
     Ok(())
 }
@@ -156,74 +154,29 @@ fn capture(command: &mut Command, args: &[&str], tag: &str, expected: i32) -> Re
     Ok(captured)
 }
 
+/// `--install` and `--uninstall` must refuse a drive root, in the selected language.
 #[cfg(windows)]
-fn powershell() -> Result<Command> {
-    let system = std::env::var_os("SystemRoot").ok_or("SystemRoot is not set")?;
-    Ok(Command::new(
-        std::path::PathBuf::from(system).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"),
-    ))
-}
-
-/// The shipped installer scripts must refuse a drive root in the selected language.
-#[cfg(windows)]
-fn installer_diagnostics(tag: &str, text: &dyn Fn(&str) -> &'static str) -> Result {
+fn installer_diagnostics(
+    executable: &std::path::Path,
+    tag: &str,
+    text: &dyn Fn(&str) -> &'static str,
+) -> Result {
     let root = root();
     let drive = root
         .ancestors()
         .last()
         .ok_or("repository has no drive root")?;
     let drive_root = format!("{}.", drive.display());
-    for script in ["install", "uninstall"] {
-        let path = root.join("scripts").join(format!("{script}.ps1"));
-        let path = path.to_str().ok_or("non-UTF-8 repository path")?;
-        let args = [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            path,
-            "-InstallDir",
-            &drive_root,
-        ];
-        let output = capture(&mut powershell()?, &args, tag, 1)?;
+    for action in ["install", "uninstall"] {
+        let flag = format!("--{action}");
+        let args = [flag.as_str(), "--install-dir", &drive_root];
+        let output = capture(&mut Command::new(executable), &args, tag, 1)?;
         ensure(
-            format!("{}\n{}", output.stdout, output.stderr)
-                .contains(text(&format!("{script}.invalid_directory"))),
-            format!("Installer diagnostic mismatch: {tag:?}/{script}"),
+            output
+                .stderr
+                .contains(text(&format!("{action}.invalid_directory"))),
+            format!("Installer diagnostic mismatch: {tag:?}/{action}"),
         )?;
     }
     Ok(())
-}
-
-/// Substitution in the PowerShell catalog loader must never interpret braces in a path.
-#[cfg(windows)]
-fn installer_placeholders() -> Result {
-    let loader = root().join(r"scripts\i18n.ps1");
-    let loader = loader
-        .to_str()
-        .ok_or("non-UTF-8 repository path")?
-        .replace('\'', "''");
-    let script = format!(
-        ". '{loader}'; Get-UnbloatText 'config.read_failed' @('C:\\{{1}}\\file', 'DETAIL')"
-    );
-    let output = capture(
-        &mut powershell()?,
-        &[
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ],
-        "",
-        0,
-    )?;
-    ensure(
-        output.stdout.ends_with("DETAIL"),
-        "Missing placeholder value.",
-    )?;
-    ensure(
-        output.stdout.contains(r"C:\{1}\file"),
-        "Path interpreted as a placeholder.",
-    )
 }

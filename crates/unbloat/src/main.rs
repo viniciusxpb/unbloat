@@ -10,7 +10,15 @@ mod launcher;
 #[path = "../../unbloat-shell/src/selection.rs"]
 mod selection;
 #[cfg(windows)]
+mod setup;
+#[cfg(windows)]
 mod ui;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Setup {
+    Install,
+    Uninstall,
+}
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).peekable();
@@ -23,6 +31,8 @@ fn run() -> Result<()> {
     let mut paths = Vec::new();
     let mut transport = None;
     let mut literal = false;
+    let mut setup = None;
+    let mut install_dir = None;
     while let Some(arg) = args.next() {
         if literal {
             paths.push(PathBuf::from(arg));
@@ -34,6 +44,20 @@ fn run() -> Result<()> {
             shell = true;
         } else if arg == "--dev-run" {
             development = true;
+        } else if arg == "--install" || arg == "--uninstall" {
+            if setup.is_some() {
+                return Err(error(i18n::text("cli.setup_options")));
+            }
+            setup = Some(if arg == "--install" {
+                Setup::Install
+            } else {
+                Setup::Uninstall
+            });
+        } else if arg == "--install-dir" {
+            install_dir = Some(PathBuf::from(
+                args.next()
+                    .ok_or_else(|| error(i18n::text("cli.setup_options")))?,
+            ));
         } else if arg == "--selection-file" {
             if transport.is_some() {
                 return Err(error(i18n::text("cli.duplicate_transport")));
@@ -53,6 +77,15 @@ fn run() -> Result<()> {
         } else {
             paths.push(PathBuf::from(arg));
         }
+    }
+    if let Some(setup) = setup {
+        if shell || development || transport.is_some() || !paths.is_empty() {
+            return Err(error(i18n::text("cli.setup_options")));
+        }
+        return run_setup(setup, install_dir);
+    }
+    if install_dir.is_some() {
+        return Err(error(i18n::text("cli.setup_options")));
     }
     if let Some(transport) = transport {
         if !paths.is_empty() || development {
@@ -108,6 +141,40 @@ fn run() -> Result<()> {
     let path = archiver::create(&manifest, &config, &cancel, &status)?;
     println!("{}", unbloat::display_path(&path));
     Ok(())
+}
+
+/// `--install` / `--uninstall`: the same per-user setup as the launcher buttons.
+fn run_setup(action: Setup, dir: Option<PathBuf>) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let dir = match dir {
+            Some(dir) => dir,
+            None => setup::default_dir()?,
+        };
+        match action {
+            Setup::Install => {
+                let dir = setup::install_dir(&dir)?;
+                let dir = setup::install(&setup::Package::current()?, &dir)?;
+                println!(
+                    "{}",
+                    i18n::message("install.complete", &[&unbloat::display_path(&dir)])
+                );
+                println!("{}", i18n::text("install.usage"));
+            }
+            Setup::Uninstall => match setup::uninstall(&dir)? {
+                setup::Uninstalled::Removed => println!("{}", i18n::text("uninstall.complete")),
+                setup::Uninstalled::AlreadyRemoved => {
+                    println!("{}", i18n::text("uninstall.already_removed"))
+                }
+            },
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (action, dir);
+        Err(error(i18n::text("cli.windows_only")))
+    }
 }
 
 fn main() {

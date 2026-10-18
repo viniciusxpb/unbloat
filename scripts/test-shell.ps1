@@ -12,6 +12,8 @@ $portable = Join-Path $base 'portable'
 $projects = Join-Path $base 'projects'
 $probe = Join-Path $root 'target\release\examples\shell_probe.exe'
 if (-not (Test-Path -LiteralPath $probe)) { throw 'Execute cargo build --workspace --release --examples --bins --lib --locked' }
+$package = Join-Path $root 'dist\Unbloat\unbloat.exe'
+if (-not (Test-Path -LiteralPath $package)) { throw 'Execute make package' }
 $results = @()
 function Invoke-Probe([string]$Dll, [string[]]$Folders, [string[]]$Flags) {
     & $probe $Dll @Folders @Flags
@@ -49,12 +51,12 @@ try {
         $results | Write-Output
         return
     }
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install.ps1') -InstallDir $installed
+    & $package --install --install-dir $installed | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'Instalação falhou' }
     $installedManifest = Get-Content -LiteralPath (Join-Path $installed '.unbloat-install.json') -Raw | ConvertFrom-Json
     Invoke-Probe (Join-Path $installed $installedManifest.shell_dll) @($folders[0], $folders[1]) @('--invoke', '--registered')
     $results += '- PASS: per-user installation, registered COM activation and invocation'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install.ps1') -InstallDir $installed
+    & $package --install --install-dir $installed | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'Reinstalação falhou' }
     $results += '- PASS: reinstallation'
     # Exercise installation while the actual application is compressing.
@@ -72,7 +74,7 @@ try {
         if ($running.HasExited -or $running.MainWindowHandle -eq [IntPtr]::Zero) { throw 'Aplicativo de teste não iniciou a janela' }
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install.ps1') -InstallDir $installed 2>&1 | Out-File -LiteralPath (Join-Path $base 'expected-in-use-error.txt')
+        & $package --install --install-dir $installed 2>&1 | Out-File -LiteralPath (Join-Path $base 'expected-in-use-error.txt')
         $exitCode = $LASTEXITCODE
         $ErrorActionPreference = $previousPreference
         if ($exitCode -eq 0) { throw 'Instalador não recusou binário em uso' }
@@ -89,7 +91,8 @@ try {
     $results += '- PASS: installation while the application is running fails clearly; safe cancellation finishes normally'
 } finally {
     if (Test-Path -LiteralPath (Join-Path $installed '.unbloat-install.json')) {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'uninstall.ps1') -InstallDir $installed
+        # The installed copy removes itself, as the launcher button does.
+        & (Join-Path $installed "unbloat.exe") --uninstall --install-dir $installed | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Limpeza de instalação falhou: $installed" }
     }
 }

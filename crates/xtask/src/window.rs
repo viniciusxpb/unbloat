@@ -14,7 +14,7 @@ use windows::{
 
 /// Control ids from crates/unbloat/src/launcher.rs.
 const INSTALL: i32 = 10;
-const CLOSE: i32 = 20;
+const UNINSTALL: i32 = 40;
 
 pub fn check_launcher(executable: &Path, tag: &str, text: &dyn Fn(&str) -> &'static str) -> Result {
     let mut command = Command::new(executable);
@@ -34,7 +34,7 @@ pub fn check_launcher(executable: &Path, tag: &str, text: &dyn Fn(&str) -> &'sta
         for (control, key) in [
             (None, "launcher.title"),
             (Some(INSTALL), "launcher.install"),
-            (Some(CLOSE), "common.close"),
+            (Some(UNINSTALL), "launcher.uninstall"),
         ] {
             let handle = match control {
                 None => window,
