@@ -22,8 +22,8 @@ use windows::{
     core::{Error, GUID, HRESULT, IUnknown, Interface, PCSTR, PSTR, PWSTR, Ref, Result, implement},
 };
 
-// Refresh the class identity so Explorer doesn't reuse a handler without localization.
-// Older identities remain compatible until their in-process references drain.
+// A new class identity per incompatible handler change, so Explorer never reuses an
+// older handler. Previous identities stay accepted until their references drain.
 pub const CLSID_UNBLOAT: GUID = GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96374);
 const CLSID_PREVIOUS: [GUID; 3] = [
     GUID::from_u128(0xc74e4f58_593d_4fb5_ae90_5683c2d96373),

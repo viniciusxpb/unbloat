@@ -1,7 +1,7 @@
 //! Per-user installation of the Explorer integration: files under
 //! %LOCALAPPDATA%\Programs\Unbloat and COM registration in HKCU, without
-//! elevation. Reads and upgrades installations made by the former PowerShell
-//! installer: same marker file, DLL naming and CLSIDs.
+//! elevation. Marker file, DLL naming and CLSIDs stay compatible with earlier
+//! installations.
 mod registry;
 
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ impl Marker {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        // Windows PowerShell 5.1 wrote it with a byte order mark.
+        // Earlier installations wrote it with a byte order mark.
         let marker: Self = serde_json::from_str(text.trim_start_matches('\u{feff}'))
             .map_err(|_| error(i18n::text("uninstall.invalid_marker")))?;
         let known = std::iter::once(&CLSID)

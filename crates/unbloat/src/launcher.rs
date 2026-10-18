@@ -1,5 +1,5 @@
 //! Native first-launch window. Opening the executable explains its use and
-//! installs or uninstalls the Explorer integration, without PowerShell.
+//! installs or uninstalls the Explorer integration.
 use crate::setup::{self, Package};
 use crate::ui::{
     paint::{palette, strong_ranges},

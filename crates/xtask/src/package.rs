@@ -93,7 +93,7 @@ fn reveal(file: &Path) -> io::Result<()> {
     }
 }
 
-/// For example `windows-x64`, the name earlier releases used.
+/// For example `windows-x64`.
 fn platform() -> String {
     let arch = match std::env::consts::ARCH {
         "x86_64" => "x64",
